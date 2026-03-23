@@ -302,6 +302,37 @@ export class PostgresAdapter implements DbAdapter {
     `, vals);
     return res.rows;
   }
+
+  // ─── Maintenance ──────────────────────────────────────────────────────────
+
+  async countPendingEmbeddings(): Promise<number> {
+    const res = await this.q<{ n: string }>(
+      "SELECT count(*) AS n FROM memory_entries WHERE embedding_status = 'pending' AND archived_at IS NULL"
+    );
+    return parseInt(res.rows[0]?.n ?? "0", 10);
+  }
+
+  async markStaleEmbeddingsFailed(olderThanMs: number): Promise<number> {
+    const cutoff = new Date(Date.now() - olderThanMs).toISOString();
+    const res = await this.q<{ count: string }>(`
+      WITH updated AS (
+        UPDATE memory_entries
+        SET embedding_status = 'failed', updated_at = NOW()
+        WHERE embedding_status = 'pending'
+          AND created_at < $1
+        RETURNING entry_id
+      )
+      SELECT count(*)::text AS count FROM updated
+    `, [cutoff]);
+    return parseInt(res.rows[0]?.count ?? "0", 10);
+  }
+
+  async countExpiredKeys(): Promise<number> {
+    const res = await this.q<{ n: string }>(
+      "SELECT count(*) AS n FROM api_keys WHERE expires_at < NOW() AND revoked_at IS NULL"
+    );
+    return parseInt(res.rows[0]?.n ?? "0", 10);
+  }
 }
 
 export function createPostgresAdapter(): PostgresAdapter {

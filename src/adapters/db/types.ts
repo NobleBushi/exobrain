@@ -111,4 +111,9 @@ export interface DbAdapter {
     spaceId?: string; principalId?: string; action?: string;
     since?: string; limit?: number;
   }): Promise<unknown[]>;
+
+  // Maintenance (optional — adapters implement where supported)
+  countPendingEmbeddings?(): Promise<number>;
+  markStaleEmbeddingsFailed?(olderThanMs: number): Promise<number>;
+  countExpiredKeys?(): Promise<number>;
 }

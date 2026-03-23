@@ -15,6 +15,7 @@ import { createSqliteAdapter } from "./adapters/db/sqlite.js";
 import type { GraphAdapter } from "./adapters/graph/types.js";
 import type { DbAdapter } from "./adapters/db/types.js";
 import type { Principal } from "./context.js";
+import { startMaintenance } from "./maintenance.js";
 
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
 
@@ -143,10 +144,16 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   }
 });
 
+// ── Background maintenance ─────────────────────────────────────────────────
+
+const MAINTENANCE_INTERVAL = parseInt(process.env.MAINTENANCE_INTERVAL_MS ?? String(5 * 60 * 1000), 10);
+const stopMaintenance = startMaintenance(graph, db, () => sessions, MAINTENANCE_INTERVAL);
+
 // ── Graceful shutdown ──────────────────────────────────────────────────────
 
 async function shutdown() {
   console.log("Shutting down...");
+  stopMaintenance();
   await graph.disconnect();
   await db.disconnect();
   httpServer.close(() => process.exit(0));
