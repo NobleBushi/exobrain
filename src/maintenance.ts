@@ -10,6 +10,7 @@
 
 import type { GraphAdapter } from "./adapters/graph/types.js";
 import type { DbAdapter } from "./adapters/db/types.js";
+import { embedEntry, detectEmbeddingBackend } from "./embedding.js";
 
 export interface MaintenanceReport {
   timestamp: string;
@@ -24,6 +25,7 @@ export interface MaintenanceReport {
     pendingEmbeddings: number;
     stalePendingMarkedFailed: number;
     expiredKeysFound: number;
+    embeddedThisCycle: number;
   };
   sessions: {
     activeSessions: number;
@@ -97,20 +99,47 @@ async function checkKgIntegrity(graph: GraphAdapter): Promise<MaintenanceReport[
 
 // ── DB async task checks ───────────────────────────────────────────────────
 
+const EMBED_BATCH = 10;  // entries to embed per maintenance cycle
+
 async function checkDbTasks(db: DbAdapter): Promise<MaintenanceReport["db"]> {
-  // Count pending embeddings
-  const pending = await db.countPendingEmbeddings?.() ?? 0;
-
-  // Mark stale pending entries as failed
-  const staleMarked = await db.markStaleEmbeddingsFailed?.(STALE_EMBED_MS) ?? 0;
-
   // Count expired (but not yet revoked) API keys — informational only
   const expiredKeys = await db.countExpiredKeys?.() ?? 0;
+
+  // Process pending embeddings if backend is available
+  let embedded = 0;
+  let staleMarked = 0;
+
+  if (db.getPendingEmbeddingEntries && db.updateEmbedding) {
+    const { available } = await detectEmbeddingBackend();
+
+    if (available) {
+      const entries = await db.getPendingEmbeddingEntries(EMBED_BATCH);
+      for (const entry of entries) {
+        try {
+          const result = await embedEntry(entry.content, entry.summary);
+          await db.updateEmbedding(entry.entryId, result.entryEmbedding!, result.model, "complete");
+          if (result.chunks.length > 0 && db.saveChunks) {
+            await db.saveChunks(entry.entryId, result.chunks);
+          }
+          embedded++;
+        } catch (e) {
+          console.warn(`[maintenance] embedding failed for ${entry.entryId}:`, e instanceof Error ? e.message : e);
+          await db.updateEmbedding?.(entry.entryId, [], "", "failed").catch(() => {});
+        }
+      }
+    }
+
+    // Mark entries stuck in pending longer than the stale threshold as failed
+    staleMarked = await db.markStaleEmbeddingsFailed?.(STALE_EMBED_MS) ?? 0;
+  }
+
+  const pending = await db.countPendingEmbeddings?.() ?? 0;
 
   return {
     pendingEmbeddings: pending,
     stalePendingMarkedFailed: staleMarked,
     expiredKeysFound: expiredKeys,
+    embeddedThisCycle: embedded,
   };
 }
 
@@ -138,7 +167,7 @@ export function startMaintenance(
       dbStats = await checkDbTasks(db);
     } catch (e) {
       console.error("[maintenance] DB task check failed:", e);
-      dbStats = { pendingEmbeddings: -1, stalePendingMarkedFailed: 0, expiredKeysFound: 0 };
+      dbStats = { pendingEmbeddings: -1, stalePendingMarkedFailed: 0, expiredKeysFound: 0, embeddedThisCycle: 0 };
     }
 
     const sessions = getSessions();
@@ -155,7 +184,7 @@ export function startMaintenance(
       `[maintenance] ${now} | KG ${kgStatus} (${kg.nodeCount} nodes)` +
       (kg.lockedNodeViolations.length ? ` | VIOLATIONS: ${kg.lockedNodeViolations.join("; ")}` : "") +
       (kg.geometricViolations.length  ? ` | GEO: ${kg.geometricViolations.join("; ")}` : "") +
-      ` | embeddings pending=${dbStats.pendingEmbeddings} stale-failed=${dbStats.stalePendingMarkedFailed}` +
+      ` | embeddings pending=${dbStats.pendingEmbeddings} embedded=${dbStats.embeddedThisCycle} stale-failed=${dbStats.stalePendingMarkedFailed}` +
       ` | sessions=${report.sessions.activeSessions}`
     );
 

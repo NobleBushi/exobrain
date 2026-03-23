@@ -269,6 +269,64 @@ export class PostgresAdapter implements DbAdapter {
     return res.rows;
   }
 
+  async saveChunks(entryId: string, chunks: Array<{
+    index: number; content: string; tokenEst: number; embedding: number[];
+  }>): Promise<void> {
+    for (const chunk of chunks) {
+      const vectorStr = `[${chunk.embedding.join(",")}]`;
+      await this.q(`
+        INSERT INTO memory_chunks (entry_id, chunk_index, content, token_est, embedding)
+        VALUES ($1, $2, $3, $4, $5::vector)
+        ON CONFLICT (entry_id, chunk_index) DO UPDATE
+          SET content = EXCLUDED.content, token_est = EXCLUDED.token_est,
+              embedding = EXCLUDED.embedding
+      `, [entryId, chunk.index, chunk.content, chunk.tokenEst, vectorStr]);
+    }
+  }
+
+  async vectorSearchChunks(spaceId: string, embedding: number[], k = 10): Promise<MemoryEntry[]> {
+    const vectorStr = `[${embedding.join(",")}]`;
+    // Search chunks, return deduplicated parent entries ordered by best chunk match
+    const res = await this.q<MemoryEntry>(`
+      SELECT DISTINCT ON (e.entry_id) e.*,
+             (c.embedding <=> $1::vector) AS distance
+      FROM memory_chunks c
+      JOIN memory_entries e ON e.entry_id = c.entry_id
+      WHERE e.space_id = $2
+        AND e.archived_at IS NULL
+        AND c.embedding IS NOT NULL
+      ORDER BY e.entry_id, c.embedding <=> $1::vector
+      LIMIT $3
+    `, [vectorStr, spaceId, k]);
+    return res.rows;
+  }
+
+  async updateEmbedding(entryId: string, embedding: number[], model: string, status: "complete" | "failed"): Promise<void> {
+    if (status === "failed" || embedding.length === 0) {
+      await this.q(
+        "UPDATE memory_entries SET embedding_status = 'failed', updated_at = NOW() WHERE entry_id = $1",
+        [entryId]
+      );
+      return;
+    }
+    const vectorStr = `[${embedding.join(",")}]`;
+    await this.q(`
+      UPDATE memory_entries
+      SET embedding = $1::vector, embedding_model = $2, embedding_status = 'complete', updated_at = NOW()
+      WHERE entry_id = $3
+    `, [vectorStr, model, entryId]);
+  }
+
+  async getPendingEmbeddingEntries(limit: number): Promise<MemoryEntry[]> {
+    const res = await this.q<MemoryEntry>(`
+      SELECT * FROM memory_entries
+      WHERE embedding_status = 'pending' AND archived_at IS NULL
+      ORDER BY created_at ASC
+      LIMIT $1
+    `, [limit]);
+    return res.rows;
+  }
+
   // ─── Audit ────────────────────────────────────────────────────────────────
 
   async logAudit(entry: Record<string, unknown>): Promise<void> {

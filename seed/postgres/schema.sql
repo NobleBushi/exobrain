@@ -193,8 +193,8 @@ CREATE TABLE memory_entries (
   agent_name       TEXT,         -- e.g., 'Cecil', 'coordinator', 'exobrain-mcp'
 
   -- Vector embedding for semantic search
-  -- Default dimension: 1536 (nomic-embed-text). Adjust for your embedding model.
-  embedding        vector(1536),
+  -- nomic-embed-text: 768 dims. Change if swapping models (requires schema migration).
+  embedding        vector(768),
   embedding_model  TEXT,
   embedding_status embed_status  NOT NULL DEFAULT 'pending',
 
@@ -234,6 +234,27 @@ CREATE INDEX idx_memory_content_fts ON memory_entries
 --
 -- On first deployment, leave indexes commented. Run the seed, load some data,
 -- then create the appropriate index. See deployment guide for tuning.
+
+-- ─── Memory Chunks (for long-entry chunked embeddings) ───────────────────────
+-- Entries longer than ~400 tokens are split into overlapping chunks.
+-- Vector search hits chunks and deduplicates back to parent entries.
+-- Short entries (<= threshold) embed directly on memory_entries.embedding.
+
+CREATE TABLE memory_chunks (
+  chunk_id     UUID          PRIMARY KEY DEFAULT uuid_generate_v4(),
+  entry_id     UUID          NOT NULL REFERENCES memory_entries(entry_id) ON DELETE CASCADE,
+  chunk_index  INTEGER       NOT NULL,
+  content      TEXT          NOT NULL,
+  token_est    INTEGER,                  -- estimated token count
+  embedding    vector(768),
+  created_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+  UNIQUE (entry_id, chunk_index)
+);
+
+CREATE INDEX idx_chunks_entry_id  ON memory_chunks(entry_id);
+-- Chunk vector index (same pattern as memory_entries — uncomment after data load):
+-- CREATE INDEX idx_chunks_embedding_hnsw ON memory_chunks
+--   USING hnsw(embedding vector_cosine_ops);
 
 -- ─── Audit Log (immutable, append-only) ──────────────────────────────────────
 -- No UPDATE or DELETE should ever touch this table in production.

@@ -241,6 +241,10 @@ async function main() {
 
   console.log("\nDetecting hardware...\n");
 
+  // Detect embedding backend before other checks
+  const { detectEmbeddingBackend } = await import("../src/embedding.js");
+  const embedInfo = await detectEmbeddingBackend();
+
   const arch      = run("uname -m") || "unknown";
   const os        = run("uname -s") + " " + run("uname -r");
   const hostname  = run("hostname") || "unknown";
@@ -273,6 +277,24 @@ async function main() {
   console.log(`  RAM:   ${gb(ramBytes)}`);
   console.log(`  Disk:  ${gb(diskFree)} free`);
   console.log(`  Docker: ${docker ? "✓ available" : "✗ not found — install Docker before proceeding"}`);
+
+  console.log("\n─── Embedding backend ──────────────────────────────────────");
+  if (embedInfo.available) {
+    const tag = embedInfo.backend === "llamacpp" ? "llama.cpp server ✓ (recommended)"
+              : embedInfo.backend === "ollama"   ? "Ollama (detected — works, but llama.cpp server is lighter)"
+              :                                    "configured";
+    console.log(`  Backend: ${tag}`);
+    console.log(`  URL:     ${embedInfo.baseUrl}`);
+    console.log(`  Model:   ${process.env.EMBEDDING_MODEL ?? "nomic-embed-text"} (nomic-embed-text recommended)`);
+  } else {
+    console.log("  No embedding backend detected.");
+    console.log("  Recommended: llama.cpp server (lightweight, same models as Ollama)");
+    console.log("    Download: https://github.com/ggerganov/llama.cpp/releases");
+    console.log("    Run:  llama-server --hf-repo nomic-ai/nomic-embed-text-v1.5-GGUF \\");
+    console.log("              --hf-file nomic-embed-text-v1.5.Q8_0.gguf --port 8080 --embedding");
+    console.log("  Alt:  Ollama already installed? Run: ollama pull nomic-embed-text");
+    console.log("  Entries will queue as 'pending' until a backend is available.");
+  }
 
   console.log("\n─── GPU / Local LLM ────────────────────────────────────────");
   if (gpus.length === 0) {

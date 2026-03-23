@@ -112,8 +112,16 @@ export interface DbAdapter {
     since?: string; limit?: number;
   }): Promise<unknown[]>;
 
+  // Chunks (for long-entry chunked embeddings)
+  saveChunks?(entryId: string, chunks: Array<{
+    index: number; content: string; tokenEst: number; embedding: number[];
+  }>): Promise<void>;
+  vectorSearchChunks?(spaceId: string, embedding: number[], k?: number): Promise<MemoryEntry[]>;
+
   // Maintenance (optional — adapters implement where supported)
   countPendingEmbeddings?(): Promise<number>;
   markStaleEmbeddingsFailed?(olderThanMs: number): Promise<number>;
   countExpiredKeys?(): Promise<number>;
+  getPendingEmbeddingEntries?(limit: number): Promise<MemoryEntry[]>;
+  updateEmbedding?(entryId: string, embedding: number[], model: string, status: "complete" | "failed"): Promise<void>;
 }
