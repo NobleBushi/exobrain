@@ -1,0 +1,144 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { getContext, getPrincipal } from "../context.js";
+import type { DbAdapter } from "../adapters/db/types.js";
+
+export function registerDbTools(server: McpServer, db: DbAdapter) {
+
+  // ── db_write ──────────────────────────────────────────────────────────────
+  server.tool(
+    "db_write",
+    "Write a memory entry to a space. Requires 'write' permission. Provenance (model, agent_name) is encouraged for all writes.",
+    {
+      space_id:        z.string().describe("Target space ID"),
+      content:         z.string().describe("The knowledge content to store"),
+      summary:         z.string().optional().describe("Short summary (used in bootstrap context)"),
+      entry_type:      z.enum(["semantic", "procedural", "episodic", "correction"]).optional().default("semantic"),
+      importance_score: z.number().min(0).max(1).optional().default(0.5)
+                         .describe("0.0–1.0; higher surfaces sooner in searches"),
+      tags:            z.array(z.string()).optional().default([]),
+      kg_nodes:        z.array(z.string()).optional().default([])
+                         .describe("TF3 node IDs this entry relates to (e.g. ['N0020','N0030'])"),
+      model:           z.string().optional().describe("LLM that generated this content (e.g. claude-sonnet-4-6)"),
+      agent_name:      z.string().optional().describe("Agent identity (e.g. Cecil, coordinator)"),
+    },
+    async ({ space_id, content, summary, entry_type, importance_score, tags, kg_nodes, model, agent_name }) => {
+      const principal = getPrincipal();
+
+      // Check write permission — also honour API key space allowlist
+      if (principal.allowedSpaces.length > 0 && !principal.allowedSpaces.includes(space_id)) {
+        return { content: [{ type: "text" as const, text: `API key not scoped to space '${space_id}'.` }], isError: true };
+      }
+
+      const canWrite = await db.hasPermission(principal.principalId, space_id, "write");
+      if (!canWrite) {
+        return { content: [{ type: "text" as const, text: `Write permission required on '${space_id}'.` }], isError: true };
+      }
+
+      const entryId = await db.write(space_id, {
+        principalId: principal.principalId,
+        content, summary, entryType: entry_type,
+        importanceScore: importance_score,
+        tags: tags ?? [], kgNodes: kg_nodes ?? [],
+        model, agentName: agent_name,
+      });
+
+      return { content: [{ type: "text" as const, text: `✓ Written to '${space_id}'. Entry ID: ${entryId}` }] };
+    }
+  );
+
+  // ── db_read ───────────────────────────────────────────────────────────────
+  server.tool(
+    "db_read",
+    "Read memory entries from a space. Supports keyword search and filtering. Results ordered by importance then recency.",
+    {
+      space_id:  z.string().describe("Space to read from"),
+      query:     z.string().optional().default("").describe("Keyword search (empty = return recent entries)"),
+      limit:     z.number().int().min(1).max(100).optional().default(20),
+      entry_type: z.enum(["semantic", "procedural", "episodic", "correction"]).optional(),
+    },
+    async ({ space_id, query, limit }) => {
+      const principal = getPrincipal();
+
+      if (principal.allowedSpaces.length > 0 && !principal.allowedSpaces.includes(space_id)) {
+        return { content: [{ type: "text" as const, text: `API key not scoped to space '${space_id}'.` }], isError: true };
+      }
+
+      const canRead = await db.hasPermission(principal.principalId, space_id, "read");
+      if (!canRead) {
+        return { content: [{ type: "text" as const, text: `Read permission required on '${space_id}'.` }], isError: true };
+      }
+
+      const entries = await db.read(space_id, query ?? "", principal.principalId, limit);
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({ space_id, count: entries.length, entries }, null, 2),
+        }],
+      };
+    }
+  );
+
+  // ── db_scope ──────────────────────────────────────────────────────────────
+  server.tool(
+    "db_scope",
+    "Set the active space for this session. Subsequent db_read and db_write calls will use this space if space_id is omitted.",
+    {
+      space_id: z.string().describe("Space ID to set as active scope"),
+    },
+    async ({ space_id }) => {
+      const principal = getPrincipal();
+      const ctx = getContext();
+
+      const canRead = await db.hasPermission(principal.principalId, space_id, "read");
+      if (!canRead) {
+        return { content: [{ type: "text" as const, text: `Cannot scope to '${space_id}' — no read permission.` }], isError: true };
+      }
+
+      ctx.scopedSpaceId = space_id;
+      const space = await db.getSpace(space_id);
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: `✓ Scoped to '${space_id}' (${space?.spaceType ?? "unknown"}: ${space?.name ?? space_id})`,
+        }],
+      };
+    }
+  );
+
+  // ── audit_read ────────────────────────────────────────────────────────────
+  server.tool(
+    "audit_read",
+    "Read the audit log. Owners can read all entries. Others can read entries for their own principal or spaces where they have 'manage' permission.",
+    {
+      space_id:     z.string().optional().describe("Filter by space"),
+      principal_id: z.string().optional().describe("Filter by principal (owner only)"),
+      action:       z.string().optional().describe("Filter by action type"),
+      since:        z.string().optional().describe("ISO 8601 timestamp — return entries after this time"),
+      limit:        z.number().int().min(1).max(500).optional().default(50),
+    },
+    async ({ space_id, principal_id, action, since, limit }) => {
+      const principal = getPrincipal();
+      const isOwner = principal.principalType === "owner";
+
+      // Non-owners can only read their own principal's entries or spaces they manage
+      const effectivePrincipalId = isOwner ? principal_id : principal.principalId;
+
+      const entries = await db.readAuditLog({
+        spaceId: space_id,
+        principalId: effectivePrincipalId,
+        action,
+        since,
+        limit,
+      });
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({ count: entries.length, entries }, null, 2),
+        }],
+      };
+    }
+  );
+}

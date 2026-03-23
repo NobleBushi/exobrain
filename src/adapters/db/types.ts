@@ -4,23 +4,70 @@ export interface Space {
   description: string;
   spaceType: "public" | "shared" | "private" | "project" | "isolated";
   sensitivityTier: number;
+  metadata?: Record<string, unknown>;
+  archivedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface Principal {
+export interface PrincipalRecord {
   principalId: string;
   principalType: "owner" | "user" | "agent" | "group";
   name: string;
+  displayName?: string | null;
+  email?: string | null;
+  oauthProvider?: string | null;
+  oauthSubject?: string | null;
+  disabledAt?: string | null;
   createdAt: string;
+  updatedAt: string;
 }
 
-export interface AclEntry {
+export interface ApiKeyRecord {
+  keyId: string;
+  keyHash: string;
+  keyPrefix: string;
   principalId: string;
+  name: string;
+  spaceIds: string[];
+  permissions: string[];
+  issuedBy: string;
+  issuedAt?: string;
+  expiresAt?: string | null;
+  revokedAt?: string | null;
+  lastUsedAt?: string | null;
+}
+
+export interface OAuthTokenRecord {
+  tokenId: string;
+  tokenHash: string;
+  tokenType: string;
+  clientId: string;
+  principalId: string;
+  scopes: string[];
+  issuedAt: string;
+  expiresAt: string;
+  revokedAt?: string | null;
+}
+
+export interface MemoryEntry {
+  entryId: string;
   spaceId: string;
-  permissions: string[]; // read, list, write, delete, manage, admin
-  grantedBy: string;
-  grantedAt: string;
+  principalId: string;
+  content: string;
+  summary?: string | null;
+  entryType: "semantic" | "procedural" | "episodic" | "correction";
+  importanceScore: number;
+  tags: string[];
+  metadata?: Record<string, unknown>;
+  model?: string | null;
+  agentName?: string | null;
+  embeddingModel?: string | null;
+  embeddingStatus: "pending" | "complete" | "failed";
+  kgNodes: string[];
+  archivedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface DbAdapter {
@@ -34,11 +81,34 @@ export interface DbAdapter {
   updateSpace(spaceId: string, updates: Partial<Space>): Promise<Space>;
   archiveSpace(spaceId: string): Promise<void>;
 
+  // Permissions
+  hasPermission(principalId: string, spaceId: string, permission: string): Promise<boolean>;
+  getPrincipalSpaces(principalId: string): Promise<string[]>;
+
+  // Principals
+  getPrincipal(principalId: string): Promise<PrincipalRecord | null>;
+  listPrincipals(requestorId: string): Promise<PrincipalRecord[]>;
+  createAgentPrincipal(name: string): Promise<PrincipalRecord>;
+
+  // API keys
+  getApiKey(hash: string): Promise<ApiKeyRecord | null>;
+  touchApiKey(keyId: string): Promise<void>;
+  issueApiKey(key: Omit<ApiKeyRecord, "issuedAt" | "lastUsedAt">): Promise<ApiKeyRecord>;
+  revokeApiKey(keyId: string, requestorId: string): Promise<void>;
+  listApiKeys(issuerId: string): Promise<ApiKeyRecord[]>;
+
+  // OAuth
+  getOAuthToken(hash: string): Promise<OAuthTokenRecord | null>;
+
   // Memory entries
-  read(spaceId: string, query: string, limit?: number): Promise<unknown[]>;
-  write(spaceId: string, entry: Record<string, unknown>): Promise<string>;
-  vectorSearch(spaceId: string, embedding: number[], k?: number): Promise<unknown[]>;
+  read(spaceId: string, query: string, principalId: string, limit?: number): Promise<MemoryEntry[]>;
+  write(spaceId: string, entry: Partial<MemoryEntry> & { principalId: string; content: string }): Promise<string>;
+  vectorSearch(spaceId: string, embedding: number[], k?: number): Promise<MemoryEntry[]>;
 
   // Audit
   logAudit(entry: Record<string, unknown>): Promise<void>;
+  readAuditLog(filters: {
+    spaceId?: string; principalId?: string; action?: string;
+    since?: string; limit?: number;
+  }): Promise<unknown[]>;
 }
