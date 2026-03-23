@@ -1,0 +1,35 @@
+# Lightweight deployment: ArcadeDB embedded + SQLite
+# No separate Postgres container — suitable for 4 GB / Raspberry Pi
+#
+# Usage: docker-compose -f docker-compose.lite.yml up
+
+services:
+  exobrain:
+    build: .
+    container_name: exobrain
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      GRAPH_BACKEND: arcadedb
+      ARCADEDB_URL: http://arcadedb:2480
+      DB_BACKEND: sqlite
+      SQLITE_PATH: /data/exobrain.db
+    volumes:
+      - ./data:/data
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+
+  arcadedb:
+    image: arcadedata/arcadedb:latest
+    container_name: exobrain-arcadedb-lite
+    expose:
+      - "2480"
+      - "2424"
+    environment:
+      ARCADEDB_SERVER_ROOTPASSWORD: ${ARCADEDB_PASSWORD:-changeme}
+    volumes:
+      - arcadedb_data:/home/arcadedb/databases
+    restart: unless-stopped
+
+volumes:
+  arcadedb_data:

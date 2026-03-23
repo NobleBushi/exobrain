@@ -1,0 +1,40 @@
+services:
+  arcadedb:
+    image: arcadedata/arcadedb:latest
+    container_name: exobrain-arcadedb
+    ports:
+      - "2480:2480"   # HTTP API
+      - "2424:2424"   # Bolt (Neo4j driver compatible)
+    environment:
+      ARCADEDB_SERVER_ROOTPASSWORD: ${ARCADEDB_PASSWORD:-changeme}
+    volumes:
+      - arcadedb_data:/home/arcadedb/databases
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:2480/api/v1/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: exobrain-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: exobrain
+      POSTGRES_USER: exobrain
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./seed/postgres/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U exobrain"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  arcadedb_data:
+  postgres_data:
