@@ -29,16 +29,19 @@ async function arcadePost(path: string, body: unknown) {
 }
 
 async function createDatabase() {
-  try {
-    await arcadePost(`/api/v1/database/${DATABASE}`, {});
-    console.log(`✓ Database '${DATABASE}' created`);
-  } catch (e: unknown) {
-    if (e instanceof Error && e.message.includes("already exists")) {
-      console.log(`  Database '${DATABASE}' already exists — skipping`);
-    } else {
-      throw e;
-    }
+  // Check if it already exists
+  const listRes = await fetch(`${ARCADEDB_URL}/api/v1/databases`, {
+    headers: { "Authorization": `Basic ${auth}` },
+  });
+  const list = await listRes.json() as { result: string[] };
+  if (list.result?.includes(DATABASE)) {
+    console.log(`  Database '${DATABASE}' already exists — skipping`);
+    return;
   }
+
+  // Create via server command endpoint
+  await arcadePost(`/api/v1/server`, { command: `create database ${DATABASE}` });
+  console.log(`✓ Database '${DATABASE}' created`);
 }
 
 async function runCypher(statement: string) {

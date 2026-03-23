@@ -7,6 +7,7 @@ services:
       - "2424:2424"   # Bolt (Neo4j driver compatible)
     environment:
       ARCADEDB_SERVER_ROOTPASSWORD: ${ARCADEDB_PASSWORD:-changeme}
+      ARCADEDB_SETTINGS: "-Darcadedb.server.rootPassword=${ARCADEDB_PASSWORD:-changeme}"
     volumes:
       - arcadedb_data:/home/arcadedb/databases
     restart: unless-stopped
@@ -20,7 +21,7 @@ services:
     image: pgvector/pgvector:pg17
     container_name: exobrain-postgres
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_DB: exobrain
       POSTGRES_USER: exobrain

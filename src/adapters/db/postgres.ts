@@ -1,6 +1,16 @@
 import pg from "pg";
 import type { DbAdapter, Space, ApiKeyRecord, OAuthTokenRecord, PrincipalRecord, MemoryEntry } from "./types.js";
 
+function snakeToCamel(s: string): string {
+  return s.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+}
+
+function rowToCamel<T>(row: Record<string, unknown>): T {
+  return Object.fromEntries(
+    Object.entries(row).map(([k, v]) => [snakeToCamel(k), v])
+  ) as T;
+}
+
 export class PostgresAdapter implements DbAdapter {
   private pool: pg.Pool | null = null;
 
@@ -17,11 +27,13 @@ export class PostgresAdapter implements DbAdapter {
     this.pool = null;
   }
 
-  private q<T extends pg.QueryResultRow>(
+  private async q<T extends pg.QueryResultRow>(
     text: string, values?: unknown[]
   ): Promise<pg.QueryResult<T>> {
     if (!this.pool) throw new Error("Postgres not connected");
-    return this.pool.query<T>(text, values);
+    const result = await this.pool.query(text, values);
+    result.rows = result.rows.map(rowToCamel<T>);
+    return result as pg.QueryResult<T>;
   }
 
   // ─── Spaces ──────────────────────────────────────────────────────────────
@@ -91,28 +103,33 @@ export class PostgresAdapter implements DbAdapter {
   // ─── Permission checking ──────────────────────────────────────────────────
 
   async hasPermission(principalId: string, spaceId: string, permission: string): Promise<boolean> {
-    const res = await this.q<{ has_perm: boolean }>(`
-      WITH perms AS (
-        -- explicit ACL entry for this principal+space
-        SELECT unnest(permissions::text[]) AS perm
-        FROM acl_entries
-        WHERE principal_id = $1 AND space_id = $2
-          AND (expires_at IS NULL OR expires_at > NOW())
-        UNION
-        -- template permissions for 'authenticated' class
-        SELECT unnest(permissions::text[]) AS perm
-        FROM space_acl_templates t
-        JOIN spaces s ON s.space_type = t.space_type
-        WHERE s.space_id = $2 AND t.principal_class = 'authenticated'
-        UNION
-        -- owner gets everything
-        SELECT 'admin' AS perm
-        FROM principals
-        WHERE principal_id = $1 AND principal_type = 'owner'
-      )
-      SELECT ($3 = ANY(ARRAY(SELECT perm FROM perms))) AS has_perm
+    const res = await this.q<{ hasPerm: boolean }>(`
+      SELECT (
+        -- owners have all permissions on all spaces
+        EXISTS (
+          SELECT 1 FROM principals
+          WHERE principal_id = $1 AND principal_type = 'owner'
+        )
+        OR
+        -- explicit ACL entry grants the requested permission
+        EXISTS (
+          SELECT 1 FROM acl_entries
+          WHERE principal_id = $1 AND space_id = $2
+            AND $3::text = ANY(permissions::text[])
+            AND (expires_at IS NULL OR expires_at > NOW())
+        )
+        OR
+        -- space ACL template grants permission to 'authenticated' class
+        EXISTS (
+          SELECT 1 FROM space_acl_templates t
+          JOIN spaces s ON s.space_type = t.space_type
+          WHERE s.space_id = $2
+            AND t.principal_class = 'authenticated'
+            AND $3::text = ANY(t.permissions::text[])
+        )
+      ) AS has_perm
     `, [principalId, spaceId, permission]);
-    return res.rows[0]?.has_perm ?? false;
+    return res.rows[0]?.hasPerm ?? false;
   }
 
   async getPrincipalSpaces(principalId: string): Promise<string[]> {
@@ -222,7 +239,7 @@ export class PostgresAdapter implements DbAdapter {
   }
 
   async write(spaceId: string, entry: Partial<MemoryEntry> & { principalId: string; content: string }): Promise<string> {
-    const res = await this.q<{ entry_id: string }>(`
+    const res = await this.q<{ entryId: string }>(`
       INSERT INTO memory_entries
         (space_id, principal_id, content, summary, entry_type, importance_score,
          tags, kg_nodes, model, agent_name, metadata)
@@ -235,7 +252,7 @@ export class PostgresAdapter implements DbAdapter {
       entry.model ?? null, entry.agentName ?? null,
       JSON.stringify(entry.metadata ?? {}),
     ]);
-    return res.rows[0].entry_id;
+    return res.rows[0].entryId;
   }
 
   async vectorSearch(spaceId: string, embedding: number[], k = 10): Promise<MemoryEntry[]> {
