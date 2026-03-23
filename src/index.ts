@@ -155,6 +155,17 @@ async function shutdown() {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
+httpServer.on("error", (err: NodeJS.ErrnoException) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(`\n✗ Port ${PORT} is already in use.`);
+    console.error(`  Set PORT=<number> in .env to use a different port.`);
+    console.error(`  Run: npm run check:ports  to check all required ports.\n`);
+  } else {
+    console.error("HTTP server error:", err);
+  }
+  process.exit(1);
+});
+
 httpServer.listen(PORT, () => {
   console.log(`ExoBrain MCP server listening on port ${PORT}`);
   console.log(`Graph backend:    ${graphBackend}`);
