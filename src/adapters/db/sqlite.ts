@@ -154,6 +154,21 @@ export class SqliteAdapter implements DbAdapter {
     return (await this.getPrincipal(id))!;
   }
 
+  async hasOwner(): Promise<boolean> {
+    const row = this.get()
+      .prepare("SELECT 1 FROM principals WHERE principal_type = 'owner' LIMIT 1")
+      .get();
+    return row !== undefined;
+  }
+
+  async createOwnerPrincipal(name: string, displayName?: string): Promise<PrincipalRecord> {
+    const id = randomUUID();
+    this.get().prepare(
+      "INSERT INTO principals (principal_id, principal_type, name, display_name) VALUES (?, 'owner', ?, ?)"
+    ).run(id, name, displayName ?? null);
+    return (await this.getPrincipal(id))!;
+  }
+
   // ─── API Keys ─────────────────────────────────────────────────────────────
 
   async getApiKey(hash: string): Promise<ApiKeyRecord | null> {

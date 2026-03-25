@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ExoBrain — Setup</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="page" id="page-setup">
+  <div class="card">
+    <div class="logo">
+      <div class="logo-mark">E</div>
+      <div>
+        <div class="logo-text">ExoBrain</div>
+        <div class="logo-sub">Knowledge Graph MCP Server</div>
+      </div>
+    </div>
+
+    <h2>Initial Setup</h2>
+    <p class="subtitle">Create the owner account for this ExoBrain instance.</p>
+
+    <div class="alert alert-error" id="err"></div>
+
+    <form id="setup-form">
+      <div class="field">
+        <label for="owner-name">Your Name</label>
+        <input type="text" id="owner-name" placeholder="e.g. Alice" autocomplete="off" required>
+      </div>
+      <div class="field">
+        <label for="key-name">Initial API Key Name</label>
+        <input type="text" id="key-name" placeholder="e.g. Admin Key" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="secret">Registration Secret</label>
+        <input type="password" id="secret" placeholder="From REGISTRATION_SECRET in .env" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="submit-btn">
+        Initialize ExoBrain
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Success state -->
+<div class="page" id="page-done" style="display:none">
+  <div class="card">
+    <div class="logo">
+      <div class="logo-mark">E</div>
+      <div>
+        <div class="logo-text">ExoBrain</div>
+        <div class="logo-sub">Knowledge Graph MCP Server</div>
+      </div>
+    </div>
+
+    <div class="alert alert-success visible" style="margin-bottom:1.25rem;">
+      Instance initialized successfully.
+    </div>
+
+    <h2>Save Your API Key</h2>
+    <p class="subtitle">This key will not be shown again. Copy it now.</p>
+
+    <div class="key-box">
+      <div class="key-box-label">API Key</div>
+      <div class="copy-wrap">
+        <code class="key-value" id="key-display"></code>
+        <button class="btn btn-ghost btn-sm" id="copy-btn" type="button">Copy</button>
+      </div>
+      <div class="key-warning">Save this key somewhere safe before continuing.</div>
+    </div>
+
+    <p style="font-size:13px;color:var(--text2);margin-bottom:1rem;">
+      Add this to your Claude Code or Claude Desktop configuration to connect.
+    </p>
+
+    <pre id="config-snippet" style="background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:0.875rem;font-family:var(--mono);font-size:12px;line-height:1.6;overflow-x:auto;margin-bottom:1.25rem;white-space:pre-wrap;word-break:break-all;"></pre>
+
+    <button class="btn btn-primary" id="go-admin-btn" type="button">
+      Open Admin Dashboard
+    </button>
+  </div>
+</div>
+
+<script src="/js/setup.js"></script>
+</body>
+</html>

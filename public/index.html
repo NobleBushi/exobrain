@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ExoBrain</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<script>
+  fetch('/api/status')
+    .then(r => r.json())
+    .then(data => {
+      window.location.href = data.initialized ? '/admin' : '/setup';
+    })
+    .catch(() => {
+      window.location.href = '/setup';
+    });
+</script>
+<div class="page">
+  <div style="color:var(--text2);font-size:13px;">Loading&hellip;</div>
+</div>
+</body>
+</html>

@@ -2,6 +2,9 @@ import "dotenv/config";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createReadStream, statSync } from "node:fs";
+import { join, extname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { requestContext } from "./context.js";
 import { verifyRequest, setDbResolver } from "./auth.js";
@@ -16,6 +19,13 @@ import type { GraphAdapter } from "./adapters/graph/types.js";
 import type { DbAdapter } from "./adapters/db/types.js";
 import type { Principal } from "./context.js";
 import { startMaintenance } from "./maintenance.js";
+import { ApiRouter } from "./api/router.js";
+import { registerStatusRoutes } from "./api/status.js";
+import { registerSetupRoutes } from "./api/setup.js";
+import { registerKeyRoutes } from "./api/keys.js";
+import { registerSpaceRoutes } from "./api/spaces.js";
+import { registerPrincipalRoutes } from "./api/principals.js";
+import { readFileSync } from "node:fs";
 
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
 
@@ -44,7 +54,58 @@ await graph.connect();
 await db.connect();
 setDbResolver(() => db);
 
-// ── Session store ──────────────────────────────────────────────────────────
+// ── Package version ────────────────────────────────────────────────────────
+
+const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8")) as { version: string };
+const VERSION = pkg.version;
+
+// ── REST API router ────────────────────────────────────────────────────────
+
+const apiRouter = new ApiRouter();
+registerStatusRoutes(apiRouter.register.bind(apiRouter), db, VERSION);
+registerSetupRoutes(apiRouter.register.bind(apiRouter), db);
+registerKeyRoutes(apiRouter.register.bind(apiRouter), db);
+registerSpaceRoutes(apiRouter.register.bind(apiRouter), db);
+registerPrincipalRoutes(apiRouter.register.bind(apiRouter), db);
+
+// ── Static file serving ────────────────────────────────────────────────────
+
+const PUBLIC_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)), "../public");
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".css":  "text/css; charset=utf-8",
+  ".js":   "application/javascript; charset=utf-8",
+  ".ico":  "image/x-icon",
+};
+
+function serveStatic(req: IncomingMessage, res: ServerResponse): boolean {
+  const url = new URL(req.url ?? "/", "http://x");
+  let pathname = url.pathname;
+
+  if (pathname === "/")       pathname = "/index.html";
+  else if (pathname === "/setup") pathname = "/setup.html";
+  else if (pathname === "/admin") pathname = "/admin.html";
+
+  const ext = extname(pathname);
+  const mime = MIME[ext];
+  if (!mime) return false;
+
+  const fullPath = resolve(join(PUBLIC_DIR, pathname));
+  // Path traversal guard
+  if (!fullPath.startsWith(PUBLIC_DIR)) return false;
+
+  try {
+    statSync(fullPath);
+  } catch {
+    return false;
+  }
+
+  res.writeHead(200, { "Content-Type": mime });
+  createReadStream(fullPath).pipe(res);
+  return true;
+}
+
+// ── MCP session store ──────────────────────────────────────────────────────
 
 interface Session {
   transport: StreamableHTTPServerTransport;
@@ -63,7 +124,7 @@ function createSession(principal: Principal): { sessionId: string; transport: St
     },
   });
 
-  const mcpServer = new McpServer({ name: "exobrain", version: "0.1.0" });
+  const mcpServer = new McpServer({ name: "exobrain", version: VERSION });
   registerKgTools(mcpServer, graph, db);
   registerSpaceTools(mcpServer, db);
   registerDbTools(mcpServer, db);
@@ -78,66 +139,101 @@ function createSession(principal: Principal): { sessionId: string; transport: St
   return { sessionId, transport };
 }
 
-// ── HTTP server ────────────────────────────────────────────────────────────
+// ── Request discriminator ──────────────────────────────────────────────────
+
+function isMcpRequest(req: IncomingMessage): boolean {
+  if (req.headers["mcp-session-id"]) return true;
+  if (req.method === "POST") {
+    const ct = req.headers["content-type"] ?? "";
+    return ct.includes("application/json");
+  }
+  return false;
+}
+
+// ── HTTP helpers ───────────────────────────────────────────────────────────
 
 function reject(res: ServerResponse, status: number, message: string) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: message }));
 }
 
-const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
-  try {
-    // Auth on every request
-    const principal = await verifyRequest(req.headers.authorization);
-    if (!principal) {
-      reject(res, 401, "Unauthorized — provide a valid Bearer token");
-      return;
-    }
+// ── MCP request handler ────────────────────────────────────────────────────
 
-    const sessionId = req.headers["mcp-session-id"] as string | undefined;
+async function handleMcp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const principal = await verifyRequest(req.headers.authorization);
+  if (!principal) {
+    reject(res, 401, "Unauthorized — provide a valid Bearer token");
+    return;
+  }
 
-    if (req.method === "DELETE") {
-      // Session teardown
-      if (sessionId) {
-        const session = sessions.get(sessionId);
-        await session?.transport.handleRequest(req, res);
-        sessions.delete(sessionId);
-      } else {
-        reject(res, 400, "mcp-session-id header required for DELETE");
-      }
-      return;
-    }
+  const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
-    if (req.method === "GET") {
-      // SSE stream for existing session
-      if (!sessionId) { reject(res, 400, "mcp-session-id header required for GET"); return; }
-      const session = sessions.get(sessionId);
-      if (!session) { reject(res, 404, "Session not found"); return; }
-      requestContext.run({ principal: session.principal }, () => {
-        session.transport.handleRequest(req, res).catch(console.error);
-      });
-      return;
-    }
-
-    if (req.method !== "POST") {
-      reject(res, 405, "Method not allowed");
-      return;
-    }
-
-    // POST — new or existing session
+  if (req.method === "DELETE") {
     if (sessionId) {
       const session = sessions.get(sessionId);
-      if (!session) { reject(res, 404, "Session not found or expired"); return; }
-      requestContext.run({ principal: session.principal }, () => {
-        session.transport.handleRequest(req, res).catch(console.error);
-      });
+      await session?.transport.handleRequest(req, res);
+      sessions.delete(sessionId);
     } else {
-      // New session — principal bound at creation time
-      const { transport } = createSession(principal);
-      requestContext.run({ principal }, () => {
-        transport.handleRequest(req, res).catch(console.error);
-      });
+      reject(res, 400, "mcp-session-id header required for DELETE");
     }
+    return;
+  }
+
+  if (req.method === "GET") {
+    if (!sessionId) { reject(res, 400, "mcp-session-id header required for GET"); return; }
+    const session = sessions.get(sessionId);
+    if (!session) { reject(res, 404, "Session not found"); return; }
+    requestContext.run({ principal: session.principal }, () => {
+      session.transport.handleRequest(req, res).catch(console.error);
+    });
+    return;
+  }
+
+  if (req.method !== "POST") {
+    reject(res, 405, "Method not allowed");
+    return;
+  }
+
+  if (sessionId) {
+    const session = sessions.get(sessionId);
+    if (!session) { reject(res, 404, "Session not found or expired"); return; }
+    requestContext.run({ principal: session.principal }, () => {
+      session.transport.handleRequest(req, res).catch(console.error);
+    });
+  } else {
+    const { transport } = createSession(principal);
+    requestContext.run({ principal }, () => {
+      transport.handleRequest(req, res).catch(console.error);
+    });
+  }
+}
+
+// ── HTTP server ────────────────────────────────────────────────────────────
+
+const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+  try {
+    const url = new URL(req.url ?? "/", "http://x");
+    const pathname = url.pathname;
+
+    // REST API routes (handle their own auth)
+    if (pathname.startsWith("/api/")) {
+      const handled = await apiRouter.handle(req, res);
+      if (!handled) reject(res, 404, "API route not found");
+      return;
+    }
+
+    // Static files (GET only)
+    if (req.method === "GET") {
+      if (serveStatic(req, res)) return;
+    }
+
+    // MCP protocol
+    if (isMcpRequest(req)) {
+      await handleMcp(req, res);
+      return;
+    }
+
+    reject(res, 404, "Not found");
   } catch (err) {
     console.error("HTTP handler error:", err);
     if (!res.headersSent) reject(res, 500, "Internal server error");

@@ -164,12 +164,25 @@ export class PostgresAdapter implements DbAdapter {
 
   // ─── API Keys ─────────────────────────────────────────────────────────────
 
+  // pg doesn't auto-parse custom enum arrays — coerce to string[] if needed
+  private parseKeyRow(row: ApiKeyRecord): ApiKeyRecord {
+    return {
+      ...row,
+      permissions: Array.isArray(row.permissions)
+        ? row.permissions
+        : String(row.permissions).replace(/^{|}$/g, "").split(",").filter(Boolean),
+      spaceIds: Array.isArray(row.spaceIds)
+        ? row.spaceIds
+        : String(row.spaceIds).replace(/^{|}$/g, "").split(",").filter(Boolean),
+    };
+  }
+
   async getApiKey(hash: string): Promise<ApiKeyRecord | null> {
     const res = await this.q<ApiKeyRecord>(
       "SELECT * FROM api_keys WHERE key_hash = $1",
       [hash]
     );
-    return res.rows[0] ?? null;
+    return res.rows[0] ? this.parseKeyRow(res.rows[0]) : null;
   }
 
   async touchApiKey(keyId: string): Promise<void> {
@@ -183,11 +196,11 @@ export class PostgresAdapter implements DbAdapter {
     const res = await this.q<ApiKeyRecord>(`
       INSERT INTO api_keys
         (key_id, key_hash, key_prefix, principal_id, name, space_ids, permissions, issued_by, expires_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7::permission[], $8, $9)
       RETURNING *
     `, [key.keyId, key.keyHash, key.keyPrefix, key.principalId, key.name,
         key.spaceIds, key.permissions, key.issuedBy, key.expiresAt ?? null]);
-    return res.rows[0];
+    return this.parseKeyRow(res.rows[0]);
   }
 
   async revokeApiKey(keyId: string, requestorId: string): Promise<void> {
@@ -202,13 +215,28 @@ export class PostgresAdapter implements DbAdapter {
       "SELECT * FROM api_keys WHERE issued_by = $1 AND revoked_at IS NULL ORDER BY issued_at DESC",
       [issuerId]
     );
-    return res.rows;
+    return res.rows.map(r => this.parseKeyRow(r));
   }
 
   async createAgentPrincipal(name: string): Promise<PrincipalRecord> {
     const res = await this.q<PrincipalRecord>(`
       INSERT INTO principals (principal_type, name) VALUES ('agent', $1) RETURNING *
     `, [name]);
+    return res.rows[0];
+  }
+
+  async hasOwner(): Promise<boolean> {
+    const res = await this.q<{ hasOwner: boolean }>(
+      "SELECT EXISTS(SELECT 1 FROM principals WHERE principal_type = 'owner') AS has_owner"
+    );
+    return res.rows[0]?.hasOwner ?? false;
+  }
+
+  async createOwnerPrincipal(name: string, displayName?: string): Promise<PrincipalRecord> {
+    const res = await this.q<PrincipalRecord>(`
+      INSERT INTO principals (principal_type, name, display_name)
+      VALUES ('owner', $1, $2) RETURNING *
+    `, [name, displayName ?? null]);
     return res.rows[0];
   }
 

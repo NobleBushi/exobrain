@@ -12,7 +12,7 @@ services:
       - arcadedb_data:/home/arcadedb/databases
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2480/api/v1/ready"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:2480/api/v1/ready || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

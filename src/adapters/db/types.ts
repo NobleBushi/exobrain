@@ -118,6 +118,10 @@ export interface DbAdapter {
   }>): Promise<void>;
   vectorSearchChunks?(spaceId: string, embedding: number[], k?: number): Promise<MemoryEntry[]>;
 
+  // Setup / bootstrap
+  hasOwner(): Promise<boolean>;
+  createOwnerPrincipal(name: string, displayName?: string): Promise<PrincipalRecord>;
+
   // Maintenance (optional — adapters implement where supported)
   countPendingEmbeddings?(): Promise<number>;
   markStaleEmbeddingsFailed?(olderThanMs: number): Promise<number>;
