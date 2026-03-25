@@ -401,6 +401,24 @@ tr:hover td { background: rgba(255,255,255,0.02); }
   .tab-panel { padding: 1rem; }
 }
 
+/* ── Login method tabs ── */
+
+.login-tab {
+  flex: 1;
+  padding: 0.5rem;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--bg3);
+  color: var(--text2);
+  border: none;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.login-tab:hover { color: var(--text); }
+.login-tab.active { background: var(--bg2); color: var(--text); }
+.login-tab:first-child { border-right: 1px solid var(--border); }
+
 /* ── Login overlay ── */
 
 #login-overlay {

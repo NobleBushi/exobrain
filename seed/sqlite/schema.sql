@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS principals (
   principal_type  TEXT  NOT NULL CHECK (principal_type IN ('owner','user','agent','group')),
   name            TEXT  NOT NULL,
   display_name    TEXT,
-  email           TEXT,
+  username        TEXT  UNIQUE,
+  email           TEXT  UNIQUE,
   password_hash   TEXT,
   oauth_provider  TEXT,
   oauth_subject   TEXT,
@@ -50,7 +51,8 @@ CREATE TABLE IF NOT EXISTS principals (
   UNIQUE (oauth_provider, oauth_subject)
 );
 
-CREATE INDEX IF NOT EXISTS idx_principals_email ON principals(email);
+CREATE INDEX IF NOT EXISTS idx_principals_email    ON principals(email)    WHERE email    IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_principals_username ON principals(username) WHERE username IS NOT NULL;
 
 -- ─── ACL Entries ─────────────────────────────────────────────────────────────
 
@@ -104,6 +106,20 @@ CREATE TABLE IF NOT EXISTS oauth_tokens (
   expires_at    TEXT  NOT NULL,
   revoked_at    TEXT
 );
+
+-- ─── Sessions ────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS sessions (
+  session_id    TEXT  PRIMARY KEY,
+  token_hash    TEXT  NOT NULL UNIQUE,
+  principal_id  TEXT  NOT NULL REFERENCES principals(principal_id) ON DELETE CASCADE,
+  created_at    TEXT  NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+  expires_at    TEXT  NOT NULL,
+  revoked_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_token_hash   ON sessions(token_hash)   WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_sessions_principal_id ON sessions(principal_id) WHERE revoked_at IS NULL;
 
 -- ─── Memory Entries ──────────────────────────────────────────────────────────
 

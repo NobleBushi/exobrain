@@ -1,13 +1,13 @@
 // ── Auth ──────────────────────────────────────────────────────────────────
 
-let apiKey = sessionStorage.getItem('exobrain_key') || '';
+let authToken = sessionStorage.getItem('exobrain_token') || '';
 
 function api(path, opts = {}) {
   return fetch(path, {
     ...opts,
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
+      'Authorization': `Bearer ${authToken}`,
       ...(opts.headers || {}),
     },
   });
@@ -18,22 +18,22 @@ function api(path, opts = {}) {
 const loginOverlay = document.getElementById('login-overlay');
 const shell        = document.getElementById('shell');
 
-async function tryAuth(key) {
-  const r = await fetch('/api/keys', {
-    headers: { 'Authorization': `Bearer ${key}` },
+async function tryAuth(token) {
+  const r = await fetch('/api/auth/me', {
+    headers: { 'Authorization': `Bearer ${token}` },
   });
   return r.ok;
 }
 
 async function init() {
-  if (apiKey) {
-    const ok = await tryAuth(apiKey).catch(() => false);
+  if (authToken) {
+    const ok = await tryAuth(authToken).catch(() => false);
     if (ok) {
       showShell();
       return;
     }
-    sessionStorage.removeItem('exobrain_key');
-    apiKey = '';
+    sessionStorage.removeItem('exobrain_token');
+    authToken = '';
   }
   loginOverlay.style.display = 'flex';
 }
@@ -45,32 +45,82 @@ function showShell() {
   loadKeys();
 }
 
-document.getElementById('login-form').addEventListener('submit', async (e) => {
+// ── Login tab switcher ────────────────────────────────────────────────────
+
+window.switchLoginTab = function(tab) {
+  document.getElementById('tab-password').classList.toggle('active', tab === 'password');
+  document.getElementById('tab-apikey').classList.toggle('active',   tab === 'apikey');
+  document.getElementById('login-form-password').style.display = tab === 'password' ? '' : 'none';
+  document.getElementById('login-form-apikey').style.display   = tab === 'apikey'   ? '' : 'none';
+};
+
+// Username + password login
+document.getElementById('login-form-password').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const key = document.getElementById('api-key-input').value.trim();
-  const btn = document.getElementById('login-btn');
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const btn = document.getElementById('login-btn-password');
   const err = document.getElementById('login-err');
   err.classList.remove('visible');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>';
 
-  const ok = await tryAuth(key).catch(() => false);
-  if (ok) {
-    apiKey = key;
-    sessionStorage.setItem('exobrain_key', key);
-    showShell();
-  } else {
-    err.textContent = 'Invalid API key.';
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const data = await r.json();
+    if (r.ok) {
+      authToken = data.sessionToken;
+      sessionStorage.setItem('exobrain_token', authToken);
+      showShell();
+    } else {
+      err.textContent = data.error || 'Login failed.';
+      err.classList.add('visible');
+      btn.disabled = false;
+      btn.textContent = 'Sign In';
+    }
+  } catch {
+    err.textContent = 'Network error — is the server running?';
     err.classList.add('visible');
     btn.disabled = false;
     btn.textContent = 'Sign In';
   }
 });
 
-document.getElementById('signout-link').addEventListener('click', (e) => {
+// API key / session token login
+document.getElementById('login-form-apikey').addEventListener('submit', async (e) => {
   e.preventDefault();
-  sessionStorage.removeItem('exobrain_key');
-  apiKey = '';
+  const token = document.getElementById('api-key-input').value.trim();
+  const btn = document.getElementById('login-btn-apikey');
+  const err = document.getElementById('login-err');
+  err.classList.remove('visible');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  const ok = await tryAuth(token).catch(() => false);
+  if (ok) {
+    authToken = token;
+    sessionStorage.setItem('exobrain_token', authToken);
+    showShell();
+  } else {
+    err.textContent = 'Invalid key or token.';
+    err.classList.add('visible');
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+  }
+});
+
+document.getElementById('signout-link').addEventListener('click', async (e) => {
+  e.preventDefault();
+  // Best-effort logout (revokes session token server-side if applicable)
+  if (authToken.startsWith('exbs_')) {
+    await api('/api/auth/logout', { method: 'POST' }).catch(() => {});
+  }
+  sessionStorage.removeItem('exobrain_token');
+  authToken = '';
   location.reload();
 });
 
@@ -89,6 +139,7 @@ document.querySelectorAll('.tab').forEach(tab => {
       tabLoaded[name] = true;
       if (name === 'spaces')     loadSpaces();
       if (name === 'principals') loadPrincipals();
+      if (name === 'account')    loadAccount();
       if (name === 'system')     loadSystem();
     }
   });
@@ -307,6 +358,100 @@ async function loadPrincipals() {
     </tr>
   `).join('');
 }
+
+// ── Account ───────────────────────────────────────────────────────────────
+
+let accountData = null;
+
+async function loadAccount() {
+  const r = await api('/api/auth/me');
+  if (!r.ok) return;
+  accountData = await r.json();
+  document.getElementById('acct-display-name').value = accountData.displayName || '';
+  document.getElementById('acct-username').value     = accountData.username     || '';
+  document.getElementById('acct-email').value        = accountData.email        || '';
+  // Only show current password field if a password is already set
+  document.getElementById('current-pw-wrap').style.display =
+    accountData.hasPassword ? '' : 'none';
+}
+
+function acctAlert(type, msg) {
+  const err = document.getElementById('acct-err');
+  const ok  = document.getElementById('acct-ok');
+  err.classList.remove('visible');
+  ok.classList.remove('visible');
+  if (type === 'error') { err.textContent = msg; err.classList.add('visible'); }
+  else                  { ok.textContent  = msg; ok.classList.add('visible');  }
+  setTimeout(() => { err.classList.remove('visible'); ok.classList.remove('visible'); }, 4000);
+}
+
+document.getElementById('profile-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.submitter;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  const r = await api('/api/auth/me', {
+    method: 'PATCH',
+    body: JSON.stringify({
+      displayName: document.getElementById('acct-display-name').value.trim() || null,
+      username:    document.getElementById('acct-username').value.trim()     || null,
+      email:       document.getElementById('acct-email').value.trim()        || null,
+    }),
+  });
+  const data = await r.json();
+  btn.disabled = false;
+  btn.textContent = 'Save Profile';
+
+  if (r.ok) {
+    accountData = { ...accountData, ...data };
+    acctAlert('success', 'Profile updated.');
+  } else {
+    acctAlert('error', data.error || 'Failed to update profile.');
+  }
+});
+
+document.getElementById('password-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const newPw     = document.getElementById('acct-new-pw').value;
+  const confirmPw = document.getElementById('acct-confirm-pw').value;
+  const currentPw = document.getElementById('acct-current-pw').value;
+
+  if (newPw !== confirmPw) {
+    acctAlert('error', 'Passwords do not match.');
+    return;
+  }
+  if (newPw.length < 8) {
+    acctAlert('error', 'Password must be at least 8 characters.');
+    return;
+  }
+
+  const btn = e.submitter;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  const body = { newPassword: newPw };
+  if (currentPw) body.currentPassword = currentPw;
+
+  const r = await api('/api/auth/me', {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  const data = await r.json();
+  btn.disabled = false;
+  btn.textContent = 'Update Password';
+
+  if (r.ok) {
+    document.getElementById('acct-current-pw').value = '';
+    document.getElementById('acct-new-pw').value     = '';
+    document.getElementById('acct-confirm-pw').value = '';
+    accountData = { ...accountData, hasPassword: true };
+    document.getElementById('current-pw-wrap').style.display = '';
+    acctAlert('success', 'Password updated.');
+  } else {
+    acctAlert('error', data.error || 'Failed to update password.');
+  }
+});
 
 // ── XSS guard ─────────────────────────────────────────────────────────────
 

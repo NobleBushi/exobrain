@@ -31,6 +31,28 @@
         <label for="key-name">Initial API Key Name</label>
         <input type="text" id="key-name" placeholder="e.g. Admin Key" autocomplete="off">
       </div>
+
+      <div style="border-top:1px solid var(--border);margin:1.25rem 0 1rem;padding-top:1rem;">
+        <p style="font-size:12px;color:var(--text2);margin-bottom:1rem;">
+          Optional: set a username and password now to enable web login without an API key.
+          You can also do this later from the admin dashboard.
+        </p>
+        <div class="form-row">
+          <div class="field" style="margin-bottom:0">
+            <label for="username">Username</label>
+            <input type="text" id="username" placeholder="e.g. alice" autocomplete="username">
+          </div>
+          <div class="field" style="margin-bottom:0">
+            <label for="email">Email</label>
+            <input type="email" id="email" placeholder="e.g. alice@example.com" autocomplete="email">
+          </div>
+        </div>
+        <div class="field" style="margin-top:1rem;">
+          <label for="password">Password</label>
+          <input type="password" id="password" placeholder="Min. 8 characters" autocomplete="new-password">
+        </div>
+      </div>
+
       <div class="field">
         <label for="secret">Registration Secret</label>
         <input type="password" id="secret" placeholder="From REGISTRATION_SECRET in .env" required>

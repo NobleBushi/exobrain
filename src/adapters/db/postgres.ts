@@ -147,6 +147,35 @@ export class PostgresAdapter implements DbAdapter {
     return res.rows[0] ?? null;
   }
 
+  async getPrincipalByUsername(username: string): Promise<PrincipalRecord | null> {
+    const res = await this.q<PrincipalRecord>(
+      "SELECT * FROM principals WHERE username = $1",
+      [username]
+    );
+    return res.rows[0] ?? null;
+  }
+
+  async updateCredentials(principalId: string, updates: {
+    username?: string | null;
+    email?: string | null;
+    passwordHash?: string | null;
+    displayName?: string | null;
+  }): Promise<PrincipalRecord> {
+    const sets: string[] = ["updated_at = NOW()"];
+    const vals: unknown[] = [];
+    let i = 1;
+    if ("username"     in updates) { sets.push(`username = $${i++}`);      vals.push(updates.username ?? null); }
+    if ("email"        in updates) { sets.push(`email = $${i++}`);         vals.push(updates.email ?? null); }
+    if ("passwordHash" in updates) { sets.push(`password_hash = $${i++}`); vals.push(updates.passwordHash ?? null); }
+    if ("displayName"  in updates) { sets.push(`display_name = $${i++}`);  vals.push(updates.displayName ?? null); }
+    vals.push(principalId);
+    const res = await this.q<PrincipalRecord>(
+      `UPDATE principals SET ${sets.join(", ")} WHERE principal_id = $${i} RETURNING *`,
+      vals
+    );
+    return res.rows[0];
+  }
+
   async listPrincipals(requestorId: string): Promise<PrincipalRecord[]> {
     // Owners see all principals; others see only themselves + agents they issued
     const res = await this.q<PrincipalRecord>(`
@@ -238,6 +267,31 @@ export class PostgresAdapter implements DbAdapter {
       VALUES ('owner', $1, $2) RETURNING *
     `, [name, displayName ?? null]);
     return res.rows[0];
+  }
+
+  // ─── Sessions ─────────────────────────────────────────────────────────────
+
+  async createSession(tokenHash: string, principalId: string, expiresAt: string): Promise<import("./types.js").SessionRecord> {
+    const res = await this.q<import("./types.js").SessionRecord>(`
+      INSERT INTO sessions (token_hash, principal_id, expires_at)
+      VALUES ($1, $2, $3) RETURNING *
+    `, [tokenHash, principalId, expiresAt]);
+    return res.rows[0];
+  }
+
+  async getSession(tokenHash: string): Promise<import("./types.js").SessionRecord | null> {
+    const res = await this.q<import("./types.js").SessionRecord>(
+      "SELECT * FROM sessions WHERE token_hash = $1",
+      [tokenHash]
+    );
+    return res.rows[0] ?? null;
+  }
+
+  async revokeSession(tokenHash: string): Promise<void> {
+    await this.q(
+      "UPDATE sessions SET revoked_at = NOW() WHERE token_hash = $1",
+      [tokenHash]
+    );
   }
 
   // ─── OAuth ────────────────────────────────────────────────────────────────

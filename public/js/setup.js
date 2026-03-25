@@ -24,6 +24,9 @@ form.addEventListener('submit', async (e) => {
 
   const ownerName = document.getElementById('owner-name').value.trim();
   const keyName   = document.getElementById('key-name').value.trim() || 'Admin Key';
+  const username  = document.getElementById('username').value.trim()  || undefined;
+  const email     = document.getElementById('email').value.trim()     || undefined;
+  const password  = document.getElementById('password').value         || undefined;
   const secret    = document.getElementById('secret').value;
 
   submitBtn.disabled = true;
@@ -33,7 +36,7 @@ form.addEventListener('submit', async (e) => {
     const res = await fetch('/api/setup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ownerName, keyName, secret }),
+      body: JSON.stringify({ ownerName, keyName, username, email, password, secret }),
     });
 
     const data = await res.json();
@@ -64,7 +67,7 @@ form.addEventListener('submit', async (e) => {
     document.getElementById('config-snippet').textContent = snippet;
 
     // Store key in sessionStorage so admin page auto-authenticates
-    sessionStorage.setItem('exobrain_key', data.apiKey);
+    sessionStorage.setItem('exobrain_token', data.apiKey);
 
   } catch (err) {
     showError('Network error — is the server running?');

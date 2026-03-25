@@ -15,12 +15,23 @@ export interface PrincipalRecord {
   principalType: "owner" | "user" | "agent" | "group";
   name: string;
   displayName?: string | null;
+  username?: string | null;
   email?: string | null;
+  passwordHash?: string | null;
   oauthProvider?: string | null;
   oauthSubject?: string | null;
   disabledAt?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SessionRecord {
+  sessionId: string;
+  tokenHash: string;
+  principalId: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt?: string | null;
 }
 
 export interface ApiKeyRecord {
@@ -87,8 +98,20 @@ export interface DbAdapter {
 
   // Principals
   getPrincipal(principalId: string): Promise<PrincipalRecord | null>;
+  getPrincipalByUsername(username: string): Promise<PrincipalRecord | null>;
   listPrincipals(requestorId: string): Promise<PrincipalRecord[]>;
   createAgentPrincipal(name: string): Promise<PrincipalRecord>;
+  updateCredentials(principalId: string, updates: {
+    username?: string | null;
+    email?: string | null;
+    passwordHash?: string | null;
+    displayName?: string | null;
+  }): Promise<PrincipalRecord>;
+
+  // Sessions (password login)
+  createSession?(tokenHash: string, principalId: string, expiresAt: string): Promise<SessionRecord>;
+  getSession?(tokenHash: string): Promise<SessionRecord | null>;
+  revokeSession?(tokenHash: string): Promise<void>;
 
   // API keys
   getApiKey(hash: string): Promise<ApiKeyRecord | null>;

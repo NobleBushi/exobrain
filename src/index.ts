@@ -25,6 +25,7 @@ import { registerSetupRoutes } from "./api/setup.js";
 import { registerKeyRoutes } from "./api/keys.js";
 import { registerSpaceRoutes } from "./api/spaces.js";
 import { registerPrincipalRoutes } from "./api/principals.js";
+import { registerAuthRoutes } from "./api/auth.js";
 import { readFileSync } from "node:fs";
 
 const PORT = parseInt(process.env.PORT ?? "3000", 10);
@@ -67,6 +68,7 @@ registerSetupRoutes(apiRouter.register.bind(apiRouter), db);
 registerKeyRoutes(apiRouter.register.bind(apiRouter), db);
 registerSpaceRoutes(apiRouter.register.bind(apiRouter), db);
 registerPrincipalRoutes(apiRouter.register.bind(apiRouter), db);
+registerAuthRoutes(apiRouter.register.bind(apiRouter), db);
 
 // ── Static file serving ────────────────────────────────────────────────────
 

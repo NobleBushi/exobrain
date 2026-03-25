@@ -55,7 +55,9 @@ CREATE TYPE audit_action AS ENUM (
   'acl_grant', 'acl_revoke',
   'key_issue', 'key_revoke',
   'scope_change',
-  'auth_success', 'auth_failure'
+  'owner_bootstrap',
+  'credentials_update',
+  'auth_success', 'auth_failure', 'auth_logout'
 );
 
 -- ─── Spaces ──────────────────────────────────────────────────────────────────
@@ -91,8 +93,9 @@ CREATE TABLE principals (
   principal_type  principal_type  NOT NULL,
   name            TEXT            NOT NULL,
   display_name    TEXT,
-  email           TEXT,
-  password_hash   TEXT,           -- for username/password auth (bcrypt)
+  username        TEXT            UNIQUE,     -- for password-based login
+  email           TEXT            UNIQUE,
+  password_hash   TEXT,           -- scrypt-derived, format: "salt:hash"
   oauth_provider  TEXT,           -- 'google' | 'github'
   oauth_subject   TEXT,           -- provider's stable user ID
   disabled_at     TIMESTAMPTZ,
@@ -101,8 +104,9 @@ CREATE TABLE principals (
   UNIQUE (oauth_provider, oauth_subject)
 );
 
-CREATE INDEX idx_principals_email ON principals(email) WHERE email IS NOT NULL;
-CREATE INDEX idx_principals_type  ON principals(principal_type);
+CREATE INDEX idx_principals_email    ON principals(email)    WHERE email    IS NOT NULL;
+CREATE INDEX idx_principals_username ON principals(username) WHERE username IS NOT NULL;
+CREATE INDEX idx_principals_type     ON principals(principal_type);
 
 -- ─── ACL Entries ─────────────────────────────────────────────────────────────
 -- Explicit per-principal, per-space permission grants.
@@ -170,6 +174,22 @@ CREATE TABLE oauth_tokens (
 
 CREATE INDEX idx_oauth_tokens_hash      ON oauth_tokens(token_hash) WHERE revoked_at IS NULL;
 CREATE INDEX idx_oauth_tokens_principal ON oauth_tokens(principal_id);
+
+-- ─── Password Sessions ────────────────────────────────────────────────────────
+-- Short-lived tokens issued by POST /api/auth/login (username + password).
+-- Stored hashed; raw token is "exbs_<base64url>" returned to client once.
+
+CREATE TABLE sessions (
+  session_id    UUID         PRIMARY KEY DEFAULT uuid_generate_v4(),
+  token_hash    TEXT         NOT NULL UNIQUE,
+  principal_id  UUID         NOT NULL REFERENCES principals(principal_id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ  NOT NULL,
+  revoked_at    TIMESTAMPTZ
+);
+
+CREATE INDEX idx_sessions_token_hash   ON sessions(token_hash)   WHERE revoked_at IS NULL;
+CREATE INDEX idx_sessions_principal_id ON sessions(principal_id) WHERE revoked_at IS NULL;
 
 -- ─── Memory Entries ──────────────────────────────────────────────────────────
 -- The primary knowledge store. Separated from the graph layer by design.

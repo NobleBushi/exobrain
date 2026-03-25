@@ -128,6 +128,29 @@ export class SqliteAdapter implements DbAdapter {
       .get(principalId) as PrincipalRecord) ?? null;
   }
 
+  async getPrincipalByUsername(username: string): Promise<PrincipalRecord | null> {
+    return (this.get()
+      .prepare("SELECT * FROM principals WHERE username = ?")
+      .get(username) as PrincipalRecord) ?? null;
+  }
+
+  async updateCredentials(principalId: string, updates: {
+    username?: string | null;
+    email?: string | null;
+    passwordHash?: string | null;
+    displayName?: string | null;
+  }): Promise<PrincipalRecord> {
+    const sets: string[] = ["updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"];
+    const vals: unknown[] = [];
+    if ("username"     in updates) { sets.push("username = ?");      vals.push(updates.username ?? null); }
+    if ("email"        in updates) { sets.push("email = ?");         vals.push(updates.email ?? null); }
+    if ("passwordHash" in updates) { sets.push("password_hash = ?"); vals.push(updates.passwordHash ?? null); }
+    if ("displayName"  in updates) { sets.push("display_name = ?");  vals.push(updates.displayName ?? null); }
+    vals.push(principalId);
+    this.get().prepare(`UPDATE principals SET ${sets.join(", ")} WHERE principal_id = ?`).run(...vals);
+    return (await this.getPrincipal(principalId))!;
+  }
+
   async listPrincipals(requestorId: string): Promise<PrincipalRecord[]> {
     const isOwner = this.get()
       .prepare("SELECT 1 FROM principals WHERE principal_id = ? AND principal_type = 'owner'")
@@ -167,6 +190,30 @@ export class SqliteAdapter implements DbAdapter {
       "INSERT INTO principals (principal_id, principal_type, name, display_name) VALUES (?, 'owner', ?, ?)"
     ).run(id, name, displayName ?? null);
     return (await this.getPrincipal(id))!;
+  }
+
+  // ─── Sessions ─────────────────────────────────────────────────────────────
+
+  async createSession(tokenHash: string, principalId: string, expiresAt: string): Promise<import("./types.js").SessionRecord> {
+    const id = randomUUID();
+    this.get().prepare(
+      "INSERT INTO sessions (session_id, token_hash, principal_id, expires_at) VALUES (?, ?, ?, ?)"
+    ).run(id, tokenHash, principalId, expiresAt);
+    return this.get()
+      .prepare("SELECT * FROM sessions WHERE session_id = ?")
+      .get(id) as import("./types.js").SessionRecord;
+  }
+
+  async getSession(tokenHash: string): Promise<import("./types.js").SessionRecord | null> {
+    return (this.get()
+      .prepare("SELECT * FROM sessions WHERE token_hash = ?")
+      .get(tokenHash) as import("./types.js").SessionRecord) ?? null;
+  }
+
+  async revokeSession(tokenHash: string): Promise<void> {
+    this.get().prepare(
+      "UPDATE sessions SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE token_hash = ?"
+    ).run(tokenHash);
   }
 
   // ─── API Keys ─────────────────────────────────────────────────────────────

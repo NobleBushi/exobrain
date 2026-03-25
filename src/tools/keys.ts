@@ -16,11 +16,7 @@ export function registerKeyTools(server: McpServer, db: DbAdapter) {
       const principal = getPrincipal();
       const principals = await db.listPrincipals(principal.principalId);
       // Never return password hashes
-      const safe = principals.map(({ ...p }) => {
-        // @ts-expect-error removing sensitive field
-        delete p.passwordHash;
-        return p;
-      });
+      const safe = principals.map(({ passwordHash: _pw, ...p }) => p);
       return { content: [{ type: "text" as const, text: JSON.stringify(safe, null, 2) }] };
     }
   );

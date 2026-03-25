@@ -19,14 +19,33 @@
       </div>
     </div>
     <h2>Sign In</h2>
-    <p class="subtitle">Enter your API key to continue.</p>
     <div class="alert alert-error" id="login-err"></div>
-    <form id="login-form">
+
+    <!-- Login method tabs -->
+    <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:6px;margin-bottom:1.25rem;overflow:hidden;">
+      <button type="button" class="login-tab active" id="tab-password" onclick="switchLoginTab('password')">Username &amp; Password</button>
+      <button type="button" class="login-tab" id="tab-apikey" onclick="switchLoginTab('apikey')">API Key</button>
+    </div>
+
+    <form id="login-form-password">
       <div class="field">
-        <label for="api-key-input">API Key</label>
-        <input type="password" id="api-key-input" placeholder="exb_…" autocomplete="off" required>
+        <label for="login-username">Username</label>
+        <input type="text" id="login-username" placeholder="Enter your username" autocomplete="username" required>
       </div>
-      <button type="submit" class="btn btn-primary" id="login-btn">Sign In</button>
+      <div class="field">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" placeholder="Enter your password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="login-btn-password">Sign In</button>
+    </form>
+
+    <form id="login-form-apikey" style="display:none">
+      <p class="subtitle" style="margin-bottom:1rem;">Enter an API key (exb_…) or session token (exbs_…).</p>
+      <div class="field">
+        <label for="api-key-input">API Key / Session Token</label>
+        <input type="password" id="api-key-input" placeholder="exb_… or exbs_…" autocomplete="off" required>
+      </div>
+      <button type="submit" class="btn btn-primary" id="login-btn-apikey">Sign In</button>
     </form>
   </div>
 </div>
@@ -49,6 +68,7 @@
     <div class="tab active" data-tab="keys">API Keys</div>
     <div class="tab" data-tab="spaces">Spaces</div>
     <div class="tab" data-tab="principals">Principals</div>
+    <div class="tab" data-tab="account">Account</div>
     <div class="tab" data-tab="system">System</div>
   </nav>
 
@@ -157,6 +177,55 @@
           <tr><td colspan="4"><div class="empty">Loading…</div></td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Account tab -->
+  <div class="tab-panel" id="panel-account">
+    <div class="panel-header">
+      <h3>Account</h3>
+    </div>
+    <div style="max-width:480px;">
+      <div class="alert alert-error"   id="acct-err"></div>
+      <div class="alert alert-success" id="acct-ok"></div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:1.25rem;margin-bottom:1.5rem;">
+        <h4 style="font-size:13px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:1rem;">Profile</h4>
+        <form id="profile-form">
+          <div class="field">
+            <label for="acct-display-name">Display Name</label>
+            <input type="text" id="acct-display-name" autocomplete="name">
+          </div>
+          <div class="field">
+            <label for="acct-username">Username</label>
+            <input type="text" id="acct-username" autocomplete="username">
+          </div>
+          <div class="field">
+            <label for="acct-email">Email</label>
+            <input type="email" id="acct-email" autocomplete="email">
+          </div>
+          <button type="submit" class="btn btn-ghost btn-sm">Save Profile</button>
+        </form>
+      </div>
+
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:1.25rem;">
+        <h4 style="font-size:13px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:1rem;">Password</h4>
+        <form id="password-form">
+          <div class="field" id="current-pw-wrap">
+            <label for="acct-current-pw">Current Password</label>
+            <input type="password" id="acct-current-pw" autocomplete="current-password">
+          </div>
+          <div class="field">
+            <label for="acct-new-pw">New Password</label>
+            <input type="password" id="acct-new-pw" placeholder="Min. 8 characters" autocomplete="new-password" required>
+          </div>
+          <div class="field">
+            <label for="acct-confirm-pw">Confirm New Password</label>
+            <input type="password" id="acct-confirm-pw" autocomplete="new-password" required>
+          </div>
+          <button type="submit" class="btn btn-ghost btn-sm">Update Password</button>
+        </form>
+      </div>
     </div>
   </div>
 

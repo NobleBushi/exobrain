@@ -11,11 +11,7 @@ export function registerPrincipalRoutes(
     if (!principal) return;
 
     const principals = await db.listPrincipals(principal.principalId);
-    const safe = principals.map(({ ...p }) => {
-      // @ts-expect-error removing sensitive field
-      delete p.passwordHash;
-      return p;
-    });
+    const safe = principals.map(({ passwordHash: _pw, ...p }) => p);
     jsonResponse(res, 200, safe);
   });
 }
