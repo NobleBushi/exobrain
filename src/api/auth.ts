@@ -8,6 +8,65 @@ import type { DbAdapter } from "../adapters/db/types.js";
 
 // Default session lifetime: 24 hours
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 5;
+
+type LoginAttemptState = {
+  count: number;
+  firstAttemptAt: number;
+  blockedUntil: number;
+};
+
+const loginAttempts = new Map<string, LoginAttemptState>();
+
+function clientAddress(req: IncomingMessage): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.socket.remoteAddress ?? "unknown";
+}
+
+function loginAttemptKey(req: IncomingMessage, username: string): string {
+  return `${clientAddress(req)}:${username.toLowerCase()}`;
+}
+
+function currentLoginBlock(req: IncomingMessage, username: string): number {
+  const now = Date.now();
+  const state = loginAttempts.get(loginAttemptKey(req, username));
+  if (!state) return 0;
+  if (state.blockedUntil <= now) {
+    loginAttempts.delete(loginAttemptKey(req, username));
+    return 0;
+  }
+  return state.blockedUntil - now;
+}
+
+function recordLoginFailure(req: IncomingMessage, username: string): number {
+  const key = loginAttemptKey(req, username);
+  const now = Date.now();
+  const state = loginAttempts.get(key);
+
+  if (!state || now - state.firstAttemptAt > LOGIN_WINDOW_MS) {
+    loginAttempts.set(key, {
+      count: 1,
+      firstAttemptAt: now,
+      blockedUntil: 0,
+    });
+    return 0;
+  }
+
+  state.count += 1;
+  if (state.count >= LOGIN_MAX_ATTEMPTS) {
+    state.blockedUntil = now + LOGIN_WINDOW_MS;
+  }
+  loginAttempts.set(key, state);
+  return state.blockedUntil > now ? state.blockedUntil - now : 0;
+}
+
+function clearLoginFailures(req: IncomingMessage, username: string): void {
+  loginAttempts.delete(loginAttemptKey(req, username));
+}
 
 export function registerAuthRoutes(
   register: (method: string, path: string, handler: (req: IncomingMessage, res: ServerResponse, params: Record<string, string>) => Promise<void>) => void,
@@ -31,6 +90,15 @@ export function registerAuthRoutes(
       return;
     }
 
+    const blockedMs = currentLoginBlock(req, body.username);
+    if (blockedMs > 0) {
+      jsonResponse(res, 429, {
+        error: "Too many login attempts. Try again later.",
+        retryAfterSeconds: Math.ceil(blockedMs / 1000),
+      });
+      return;
+    }
+
     const principal = await db.getPrincipalByUsername(body.username);
 
     // Always run verifyPassword (even on miss) to avoid timing oracle
@@ -38,11 +106,23 @@ export function registerAuthRoutes(
     const ok = await verifyPassword(body.password, storedHash);
 
     if (!principal || !ok) {
+      const blockedAfterFailureMs = recordLoginFailure(req, body.username);
       await db.logAudit({
         action: "auth_failure",
-        details: { method: "password", username: body.username },
+        details: {
+          method: "password",
+          username: body.username,
+          blockedAfterFailureMs,
+        },
       });
-      jsonResponse(res, 401, { error: "Invalid username or password" });
+      jsonResponse(res, blockedAfterFailureMs > 0 ? 429 : 401, {
+        error: blockedAfterFailureMs > 0
+          ? "Too many login attempts. Try again later."
+          : "Invalid username or password",
+        retryAfterSeconds: blockedAfterFailureMs > 0
+          ? Math.ceil(blockedAfterFailureMs / 1000)
+          : undefined,
+      });
       return;
     }
 
@@ -50,6 +130,8 @@ export function registerAuthRoutes(
       jsonResponse(res, 403, { error: "Account is disabled" });
       return;
     }
+
+    clearLoginFailures(req, body.username);
 
     const { raw, hash } = generateSessionToken();
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();

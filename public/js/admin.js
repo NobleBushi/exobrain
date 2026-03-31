@@ -184,13 +184,39 @@ async function loadStatus() {
 }
 
 async function loadSystem() {
-  const [statusRes] = await Promise.all([fetch('/api/status')]);
+  const [statusRes, detailRes] = await Promise.all([
+    fetch('/api/status'),
+    api('/api/status/detail'),
+  ]);
   const status = await statusRes.json();
+  const detail = detailRes.ok ? await detailRes.json() : null;
+  const security = detail?.security;
+  const embedding = detail?.embedding;
+  const embedHealthy = !!(embedding?.available && embedding?.sampleOk && !embedding?.error);
+
   document.getElementById('system-info').innerHTML = `
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:1rem;">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:.75rem;">Instance</div>
       ${row('Version', `v${status.version}`)}
       ${row('Initialized', status.initialized ? '<span style="color:var(--success)">Yes</span>' : '<span style="color:var(--danger)">No</span>')}
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:1rem;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:.75rem;">Security</div>
+      ${row('Registration Secret', security?.registrationSecretConfigured ? '<span style="color:var(--success)">Configured</span>' : '<span style="color:var(--danger)">Missing</span>')}
+      ${row('Password Login', security?.passwordLoginAvailable ? '<span style="color:var(--success)">Enabled</span>' : '<span style="color:var(--warning)">Not set</span>')}
+      ${row('Session TTL', security ? `${security.sessionTtlHours}h` : '—')}
+      ${row('SSO', security?.ssoConfigured ? '<span style="color:var(--success)">Configured</span>' : '<span style="color:var(--text2)">Not configured</span>')}
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:1rem;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin-bottom:.75rem;">Embeddings</div>
+      ${row('Status', embedding ? (embedHealthy ? '<span style="color:var(--success)">Ready</span>' : '<span style="color:var(--danger)">Attention needed</span>') : '—')}
+      ${row('Backend', embedding?.backend || '—')}
+      ${row('Model', embedding?.model || '—')}
+      ${row('Expected Dimensions', embedding?.dimensions ?? '—')}
+      ${row('Sample Dimensions', embedding?.sampleDimensions ?? '—')}
+      ${row('Chunking', embedding ? `${embedding.chunkTokens} / overlap ${embedding.chunkOverlap}` : '—')}
+      ${row('Endpoint', embedding?.baseUrl ? `<code class="mono">${esc(embedding.baseUrl)}</code>` : '<span style="color:var(--text2)">Not detected</span>')}
+      ${row('Probe', embedding?.error ? `<span style="color:var(--danger)">${esc(embedding.error)}</span>` : '<span style="color:var(--success)">OK</span>')}
     </div>
   `;
 }

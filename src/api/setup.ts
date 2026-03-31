@@ -38,6 +38,14 @@ export function registerSetupRoutes(
       jsonResponse(res, 400, { error: "Password must be at least 8 characters" });
       return;
     }
+    if (body.password && !body.username?.trim()) {
+      jsonResponse(res, 400, { error: "username is required when setting a password" });
+      return;
+    }
+    if (body.username && !/^[a-zA-Z0-9._-]{3,32}$/.test(body.username.trim())) {
+      jsonResponse(res, 400, { error: "username must be 3-32 characters and use letters, numbers, dot, underscore, or hyphen" });
+      return;
+    }
 
     const ownerName = (body.ownerName ?? "Owner").trim() || "Owner";
     const owner = await db.createOwnerPrincipal(ownerName);

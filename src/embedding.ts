@@ -20,6 +20,7 @@ export const EMBED_MODEL   = process.env.EMBEDDING_MODEL          ?? "nomic-embe
 export const EMBED_API_KEY = process.env.EMBEDDING_API_KEY        ?? "";
 export const CHUNK_TOKENS  = parseInt(process.env.EMBEDDING_CHUNK_TOKENS  ?? "400", 10);
 export const CHUNK_OVERLAP = parseInt(process.env.EMBEDDING_CHUNK_OVERLAP ?? "80",  10);
+export const EMBED_DIMENSIONS = parseInt(process.env.EMBEDDING_DIMENSIONS ?? "768", 10);
 
 // Rough chars-per-token for English + code (conservative estimate)
 const CHARS_PER_TOKEN = 4;
@@ -81,6 +82,66 @@ export async function detectEmbeddingBackend(): Promise<{
   }
 
   return { baseUrl: "", backend: "configured", available: false };
+}
+
+export async function probeEmbeddingHealth(): Promise<{
+  available: boolean;
+  backend: EmbedBackend;
+  baseUrl: string;
+  model: string;
+  dimensions: number;
+  chunkTokens: number;
+  chunkOverlap: number;
+  sampleOk: boolean;
+  sampleDimensions: number | null;
+  error: string | null;
+}> {
+  const detected = await detectEmbeddingBackend();
+  if (!detected.available) {
+    return {
+      available: false,
+      backend: detected.backend,
+      baseUrl: detected.baseUrl,
+      model: EMBED_MODEL,
+      dimensions: EMBED_DIMENSIONS,
+      chunkTokens: CHUNK_TOKENS,
+      chunkOverlap: CHUNK_OVERLAP,
+      sampleOk: false,
+      sampleDimensions: null,
+      error: "No embedding backend detected",
+    };
+  }
+
+  try {
+    const [vec] = await embed(["ExoBrain embedding health check"]);
+    return {
+      available: true,
+      backend: detected.backend,
+      baseUrl: detected.baseUrl,
+      model: EMBED_MODEL,
+      dimensions: EMBED_DIMENSIONS,
+      chunkTokens: CHUNK_TOKENS,
+      chunkOverlap: CHUNK_OVERLAP,
+      sampleOk: true,
+      sampleDimensions: vec?.length ?? null,
+      error: vec && vec.length === EMBED_DIMENSIONS
+        ? null
+        : `Expected ${EMBED_DIMENSIONS} dimensions but received ${vec?.length ?? 0}`,
+    };
+  } catch (error) {
+    return {
+      available: true,
+      backend: detected.backend,
+      baseUrl: detected.baseUrl,
+      model: EMBED_MODEL,
+      dimensions: EMBED_DIMENSIONS,
+      chunkTokens: CHUNK_TOKENS,
+      chunkOverlap: CHUNK_OVERLAP,
+      sampleOk: false,
+      sampleDimensions: null,
+      error: error instanceof Error ? error.message : "Unknown embedding probe failure",
+    };
+  }
 }
 
 async function getBaseUrl(): Promise<string> {
