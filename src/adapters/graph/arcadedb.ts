@@ -71,12 +71,19 @@ export class ArcadeDbAdapter implements GraphAdapter {
        SET n.name = $name, n.domain = $domain,
            n.x = $x, n.y = $y, n.z = $z,
            n.locked = false, n.confidence = $confidence,
+           n.confidence_min = $confidenceMin, n.confidence_max = $confidenceMax,
+           n.slack = $slack, n.anchor = $anchor,
            n.weight = $weight, n.orientation = $orientation,
            n.description = $description`,
       {
         id: node.id, name: node.name, domain: node.domain,
         x: node.position.x, y: node.position.y, z: node.position.z,
-        confidence: node.confidence, weight: node.weight,
+        confidence: node.confidence,
+        confidenceMin: node.confidenceMin ?? 0,
+        confidenceMax: node.confidenceMax ?? 1,
+        slack: node.slack ?? 0.2,
+        anchor: (node.anchor as string | undefined) ?? null,
+        weight: node.weight,
         orientation: node.orientation, description: node.description,
       }
     );

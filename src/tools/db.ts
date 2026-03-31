@@ -3,6 +3,13 @@ import { z } from "zod";
 import { getContext, getPrincipal } from "../context.js";
 import type { DbAdapter } from "../adapters/db/types.js";
 
+function checkPerm(permissions: string[], required: string): string | null {
+  if (!permissions.includes(required)) {
+    return `Your token does not have '${required}' permission.`;
+  }
+  return null;
+}
+
 export function registerDbTools(server: McpServer, db: DbAdapter) {
 
   // ── db_write ──────────────────────────────────────────────────────────────
@@ -10,7 +17,7 @@ export function registerDbTools(server: McpServer, db: DbAdapter) {
     "db_write",
     "Write a memory entry to a space. Requires 'write' permission. Provenance (model, agent_name) is encouraged for all writes.",
     {
-      space_id:        z.string().describe("Target space ID"),
+      space_id:        z.string().optional().describe("Target space ID (defaults to active scope set by db_scope)"),
       content:         z.string().describe("The knowledge content to store"),
       summary:         z.string().optional().describe("Short summary (used in bootstrap context)"),
       entry_type:      z.enum(["semantic", "procedural", "episodic", "correction"]).optional().default("semantic"),
@@ -22,10 +29,20 @@ export function registerDbTools(server: McpServer, db: DbAdapter) {
       model:           z.string().optional().describe("LLM that generated this content (e.g. claude-sonnet-4-6)"),
       agent_name:      z.string().optional().describe("Agent identity (e.g. Cecil, coordinator)"),
     },
-    async ({ space_id, content, summary, entry_type, importance_score, tags, kg_nodes, model, agent_name }) => {
+    async ({ space_id: rawSpaceId, content, summary, entry_type, importance_score, tags, kg_nodes, model, agent_name }) => {
       const principal = getPrincipal();
+      const ctx = getContext();
+      const space_id = rawSpaceId ?? ctx.scopedSpaceId;
 
-      // Check write permission — also honour API key space allowlist
+      if (!space_id) {
+        return { content: [{ type: "text" as const, text: "No space_id provided and no active scope. Call db_scope first or supply space_id." }], isError: true };
+      }
+
+      // Check token-level write permission
+      const permErr = checkPerm(principal.permissions, "write");
+      if (permErr) return { content: [{ type: "text" as const, text: permErr }], isError: true };
+
+      // Check API key space allowlist
       if (principal.allowedSpaces.length > 0 && !principal.allowedSpaces.includes(space_id)) {
         return { content: [{ type: "text" as const, text: `API key not scoped to space '${space_id}'.` }], isError: true };
       }
@@ -52,13 +69,23 @@ export function registerDbTools(server: McpServer, db: DbAdapter) {
     "db_read",
     "Read memory entries from a space. Supports keyword search and filtering. Results ordered by importance then recency.",
     {
-      space_id:  z.string().describe("Space to read from"),
+      space_id:  z.string().optional().describe("Space to read from (defaults to active scope set by db_scope)"),
       query:     z.string().optional().default("").describe("Keyword search (empty = return recent entries)"),
       limit:     z.number().int().min(1).max(100).optional().default(20),
       entry_type: z.enum(["semantic", "procedural", "episodic", "correction"]).optional(),
     },
-    async ({ space_id, query, limit }) => {
+    async ({ space_id: rawSpaceId, query, limit }) => {
       const principal = getPrincipal();
+      const ctx = getContext();
+      const space_id = rawSpaceId ?? ctx.scopedSpaceId;
+
+      if (!space_id) {
+        return { content: [{ type: "text" as const, text: "No space_id provided and no active scope. Call db_scope first or supply space_id." }], isError: true };
+      }
+
+      // Check token-level read permission
+      const permErr = checkPerm(principal.permissions, "read");
+      if (permErr) return { content: [{ type: "text" as const, text: permErr }], isError: true };
 
       if (principal.allowedSpaces.length > 0 && !principal.allowedSpaces.includes(space_id)) {
         return { content: [{ type: "text" as const, text: `API key not scoped to space '${space_id}'.` }], isError: true };
@@ -122,8 +149,17 @@ export function registerDbTools(server: McpServer, db: DbAdapter) {
       const principal = getPrincipal();
       const isOwner = principal.principalType === "owner";
 
-      // Non-owners can only read their own principal's entries or spaces they manage
-      const effectivePrincipalId = isOwner ? principal_id : principal.principalId;
+      // Non-owners: allow all entries in a space if they have manage permission there,
+      // otherwise restrict to their own entries only.
+      let effectivePrincipalId: string | undefined;
+      if (isOwner) {
+        effectivePrincipalId = principal_id;
+      } else if (space_id) {
+        const canManage = await db.hasPermission(principal.principalId, space_id, "manage");
+        effectivePrincipalId = canManage ? principal_id : principal.principalId;
+      } else {
+        effectivePrincipalId = principal.principalId;
+      }
 
       const entries = await db.readAuditLog({
         spaceId: space_id,

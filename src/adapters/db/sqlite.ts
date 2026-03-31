@@ -1,7 +1,10 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import type { DbAdapter, Space, ApiKeyRecord, OAuthTokenRecord, PrincipalRecord, MemoryEntry } from "./types.js";
+import type {
+  DbAdapter, Space, ApiKeyRecord, OAuthTokenRecord,
+  PrincipalRecord, MemoryEntry, SessionRecord,
+} from "./types.js";
 
 export class SqliteAdapter implements DbAdapter {
   private db: Database.Database | null = null;
@@ -27,6 +30,47 @@ export class SqliteAdapter implements DbAdapter {
     return this.db;
   }
 
+  // ─── Row mappers ──────────────────────────────────────────────────────────
+
+  private rowToCamel<T>(row: Record<string, unknown>): T {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(row)) {
+      out[k.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase())] = v;
+    }
+    return out as T;
+  }
+
+  private parseSpaceRow(raw: Record<string, unknown>): Space {
+    const r = this.rowToCamel<Space & { metadata: string }>(raw);
+    return {
+      ...r,
+      metadata: typeof r.metadata === "string" ? JSON.parse(r.metadata) : (r.metadata ?? {}),
+    };
+  }
+
+  private parsePrincipalRow(raw: Record<string, unknown>): PrincipalRecord {
+    return this.rowToCamel<PrincipalRecord>(raw);
+  }
+
+  private parseKeyRow(raw: Record<string, unknown>): ApiKeyRecord {
+    const r = this.rowToCamel<ApiKeyRecord & { spaceIds: string; permissions: string }>(raw);
+    return {
+      ...r,
+      spaceIds:    typeof r.spaceIds    === "string" ? JSON.parse(r.spaceIds)    : (r.spaceIds    ?? []),
+      permissions: typeof r.permissions === "string" ? JSON.parse(r.permissions) : (r.permissions ?? []),
+    };
+  }
+
+  private parseMemoryRow(raw: Record<string, unknown>): MemoryEntry {
+    const r = this.rowToCamel<MemoryEntry & { tags: string; kgNodes: string; metadata: string }>(raw);
+    return {
+      ...r,
+      tags:     typeof r.tags     === "string" ? JSON.parse(r.tags)     : (r.tags     ?? []),
+      kgNodes:  typeof r.kgNodes  === "string" ? JSON.parse(r.kgNodes)  : (r.kgNodes  ?? []),
+      metadata: typeof r.metadata === "string" ? JSON.parse(r.metadata) : (r.metadata ?? {}),
+    };
+  }
+
   // ─── Spaces ──────────────────────────────────────────────────────────────
 
   async listSpaces(principalId: string): Promise<Space[]> {
@@ -35,12 +79,13 @@ export class SqliteAdapter implements DbAdapter {
       .get(principalId);
 
     if (isOwner) {
-      return this.get()
+      const rows = this.get()
         .prepare("SELECT * FROM spaces WHERE archived_at IS NULL ORDER BY space_id")
-        .all() as Space[];
+        .all() as Record<string, unknown>[];
+      return rows.map(r => this.parseSpaceRow(r));
     }
 
-    return this.get().prepare(`
+    const rows = this.get().prepare(`
       SELECT DISTINCT s.* FROM spaces s
       LEFT JOIN acl_entries a ON a.space_id = s.space_id AND a.principal_id = ?
       LEFT JOIN space_acl_templates t ON t.space_type = s.space_type
@@ -48,13 +93,15 @@ export class SqliteAdapter implements DbAdapter {
       WHERE s.archived_at IS NULL
         AND (a.permissions NOT IN ('[]','') OR t.principal_class IS NOT NULL)
       ORDER BY s.space_id
-    `).all(principalId) as Space[];
+    `).all(principalId) as Record<string, unknown>[];
+    return rows.map(r => this.parseSpaceRow(r));
   }
 
   async getSpace(spaceId: string): Promise<Space | null> {
-    return (this.get()
+    const row = this.get()
       .prepare("SELECT * FROM spaces WHERE space_id = ?")
-      .get(spaceId) as Space) ?? null;
+      .get(spaceId) as Record<string, unknown> | undefined;
+    return row ? this.parseSpaceRow(row) : null;
   }
 
   async createSpace(space: Omit<Space, "createdAt" | "updatedAt">): Promise<Space> {
@@ -63,7 +110,7 @@ export class SqliteAdapter implements DbAdapter {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(space.spaceId, space.name, space.description, space.spaceType,
            space.sensitivityTier ?? 2, JSON.stringify(space.metadata ?? {}));
-    return this.getSpace(space.spaceId) as Promise<Space>;
+    return (await this.getSpace(space.spaceId))!;
   }
 
   async updateSpace(spaceId: string, updates: Partial<Space>): Promise<Space> {
@@ -123,15 +170,17 @@ export class SqliteAdapter implements DbAdapter {
   // ─── Principals ───────────────────────────────────────────────────────────
 
   async getPrincipal(principalId: string): Promise<PrincipalRecord | null> {
-    return (this.get()
+    const row = this.get()
       .prepare("SELECT * FROM principals WHERE principal_id = ?")
-      .get(principalId) as PrincipalRecord) ?? null;
+      .get(principalId) as Record<string, unknown> | undefined;
+    return row ? this.parsePrincipalRow(row) : null;
   }
 
   async getPrincipalByUsername(username: string): Promise<PrincipalRecord | null> {
-    return (this.get()
+    const row = this.get()
       .prepare("SELECT * FROM principals WHERE username = ?")
-      .get(username) as PrincipalRecord) ?? null;
+      .get(username) as Record<string, unknown> | undefined;
+    return row ? this.parsePrincipalRow(row) : null;
   }
 
   async updateCredentials(principalId: string, updates: {
@@ -156,17 +205,19 @@ export class SqliteAdapter implements DbAdapter {
       .prepare("SELECT 1 FROM principals WHERE principal_id = ? AND principal_type = 'owner'")
       .get(requestorId);
     if (isOwner) {
-      return this.get()
+      const rows = this.get()
         .prepare("SELECT * FROM principals WHERE disabled_at IS NULL ORDER BY created_at")
-        .all() as PrincipalRecord[];
+        .all() as Record<string, unknown>[];
+      return rows.map(r => this.parsePrincipalRow(r));
     }
-    return this.get().prepare(`
+    const rows = this.get().prepare(`
       SELECT p.* FROM principals p
       WHERE p.disabled_at IS NULL
         AND (p.principal_id = ?
           OR EXISTS (SELECT 1 FROM api_keys k WHERE k.issued_by = ? AND k.principal_id = p.principal_id))
       ORDER BY p.created_at
-    `).all(requestorId, requestorId) as PrincipalRecord[];
+    `).all(requestorId, requestorId) as Record<string, unknown>[];
+    return rows.map(r => this.parsePrincipalRow(r));
   }
 
   async createAgentPrincipal(name: string): Promise<PrincipalRecord> {
@@ -194,20 +245,22 @@ export class SqliteAdapter implements DbAdapter {
 
   // ─── Sessions ─────────────────────────────────────────────────────────────
 
-  async createSession(tokenHash: string, principalId: string, expiresAt: string): Promise<import("./types.js").SessionRecord> {
+  async createSession(tokenHash: string, principalId: string, expiresAt: string): Promise<SessionRecord> {
     const id = randomUUID();
     this.get().prepare(
       "INSERT INTO sessions (session_id, token_hash, principal_id, expires_at) VALUES (?, ?, ?, ?)"
     ).run(id, tokenHash, principalId, expiresAt);
-    return this.get()
+    const raw = this.get()
       .prepare("SELECT * FROM sessions WHERE session_id = ?")
-      .get(id) as import("./types.js").SessionRecord;
+      .get(id) as Record<string, unknown>;
+    return this.rowToCamel<SessionRecord>(raw);
   }
 
-  async getSession(tokenHash: string): Promise<import("./types.js").SessionRecord | null> {
-    return (this.get()
+  async getSession(tokenHash: string): Promise<SessionRecord | null> {
+    const raw = this.get()
       .prepare("SELECT * FROM sessions WHERE token_hash = ?")
-      .get(tokenHash) as import("./types.js").SessionRecord) ?? null;
+      .get(tokenHash) as Record<string, unknown> | undefined;
+    return raw ? this.rowToCamel<SessionRecord>(raw) : null;
   }
 
   async revokeSession(tokenHash: string): Promise<void> {
@@ -219,15 +272,10 @@ export class SqliteAdapter implements DbAdapter {
   // ─── API Keys ─────────────────────────────────────────────────────────────
 
   async getApiKey(hash: string): Promise<ApiKeyRecord | null> {
-    const row = this.get()
+    const raw = this.get()
       .prepare("SELECT * FROM api_keys WHERE key_hash = ?")
-      .get(hash) as (ApiKeyRecord & { space_ids: string; permissions: string }) | undefined;
-    if (!row) return null;
-    return {
-      ...row,
-      spaceIds: JSON.parse(row.space_ids as unknown as string),
-      permissions: JSON.parse(row.permissions as unknown as string),
-    };
+      .get(hash) as Record<string, unknown> | undefined;
+    return raw ? this.parseKeyRow(raw) : null;
   }
 
   async touchApiKey(keyId: string): Promise<void> {
@@ -248,48 +296,51 @@ export class SqliteAdapter implements DbAdapter {
   }
 
   async revokeApiKey(keyId: string, requestorId: string): Promise<void> {
-    this.get().prepare(
-      "UPDATE api_keys SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE key_id = ? AND issued_by = ?"
-    ).run(keyId, requestorId);
+    this.get().prepare(`
+      UPDATE api_keys SET revoked_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      WHERE key_id = ?
+        AND (issued_by = ? OR EXISTS (
+          SELECT 1 FROM principals WHERE principal_id = ? AND principal_type = 'owner'
+        ))
+    `).run(keyId, requestorId, requestorId);
   }
 
   async listApiKeys(issuerId: string): Promise<ApiKeyRecord[]> {
     const rows = this.get().prepare(
       "SELECT * FROM api_keys WHERE issued_by = ? AND revoked_at IS NULL ORDER BY issued_at DESC"
-    ).all(issuerId) as (ApiKeyRecord & { space_ids: string; permissions: string })[];
-    return rows.map(r => ({
-      ...r,
-      spaceIds: JSON.parse(r.space_ids as unknown as string),
-      permissions: JSON.parse(r.permissions as unknown as string),
-    }));
+    ).all(issuerId) as Record<string, unknown>[];
+    return rows.map(r => this.parseKeyRow(r));
   }
 
   // ─── OAuth ────────────────────────────────────────────────────────────────
 
   async getOAuthToken(hash: string): Promise<OAuthTokenRecord | null> {
-    const row = this.get()
+    const raw = this.get()
       .prepare("SELECT * FROM oauth_tokens WHERE token_hash = ?")
-      .get(hash) as (OAuthTokenRecord & { scopes: string }) | undefined;
-    if (!row) return null;
-    return { ...row, scopes: JSON.parse(row.scopes as unknown as string) };
+      .get(hash) as Record<string, unknown> | undefined;
+    if (!raw) return null;
+    const r = this.rowToCamel<OAuthTokenRecord & { scopes: string }>(raw);
+    return { ...r, scopes: typeof r.scopes === "string" ? JSON.parse(r.scopes) : (r.scopes ?? []) };
   }
 
   // ─── Memory entries ───────────────────────────────────────────────────────
 
   async read(spaceId: string, query: string, _principalId: string, limit = 20): Promise<MemoryEntry[]> {
     if (query) {
-      return this.get().prepare(`
+      const rows = this.get().prepare(`
         SELECT * FROM memory_entries
         WHERE space_id = ? AND archived_at IS NULL
           AND content LIKE ?
         ORDER BY importance_score DESC, created_at DESC LIMIT ?
-      `).all(spaceId, `%${query}%`, limit) as MemoryEntry[];
+      `).all(spaceId, `%${query}%`, limit) as Record<string, unknown>[];
+      return rows.map(r => this.parseMemoryRow(r));
     }
-    return this.get().prepare(`
+    const rows = this.get().prepare(`
       SELECT * FROM memory_entries
       WHERE space_id = ? AND archived_at IS NULL
       ORDER BY importance_score DESC, created_at DESC LIMIT ?
-    `).all(spaceId, limit) as MemoryEntry[];
+    `).all(spaceId, limit) as Record<string, unknown>[];
+    return rows.map(r => this.parseMemoryRow(r));
   }
 
   async write(spaceId: string, entry: Partial<MemoryEntry> & { principalId: string; content: string }): Promise<string> {
@@ -309,7 +360,7 @@ export class SqliteAdapter implements DbAdapter {
 
   async vectorSearch(_spaceId: string, _embedding: number[], _k = 10): Promise<MemoryEntry[]> {
     // sqlite-vec virtual table must be loaded at runtime and requires extension setup
-    // Falls back to recency-sorted results when vector search is unavailable
+    // Falls back to empty results when vector search is unavailable
     return [];
   }
 
@@ -340,9 +391,10 @@ export class SqliteAdapter implements DbAdapter {
     if (filters.since)       { conditions.push("logged_at >= ?");   vals.push(filters.since); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     vals.push(filters.limit ?? 100);
-    return this.get()
+    const rows = this.get()
       .prepare(`SELECT * FROM audit_log ${where} ORDER BY logged_at DESC LIMIT ?`)
-      .all(...vals) as unknown[];
+      .all(...vals) as Record<string, unknown>[];
+    return rows.map(r => this.rowToCamel<Record<string, unknown>>(r));
   }
 }
 

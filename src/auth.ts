@@ -120,12 +120,17 @@ async function resolveSession(hash: string): Promise<Principal | null> {
 
   const spaces = await db().getPrincipalSpaces(principal.principalId);
 
+  const isOwner = principal.principalType === "owner";
+  const permissions = isOwner
+    ? ["read", "list", "write", "delete", "manage", "admin"]
+    : ["read", "list", "write"];
+
   return {
     principalId: principal.principalId,
     principalType: principal.principalType as Principal["principalType"],
     name: principal.displayName ?? principal.name,
     allowedSpaces: spaces,
-    permissions: ["read", "list", "write", "delete", "manage", "admin"],
+    permissions,
   };
 }
 

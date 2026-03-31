@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createReadStream, statSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
@@ -36,10 +37,12 @@ const graphBackend = process.env.GRAPH_BACKEND ?? "arcadedb";
 const dbBackend    = process.env.DB_BACKEND    ?? "postgres";
 
 let graph: GraphAdapter;
-if (graphBackend === "arcadedb" || graphBackend === "neo4j") {
+if (graphBackend === "arcadedb") {
   graph = createArcadeDbAdapter();
+} else if (graphBackend === "neo4j") {
+  throw new Error("GRAPH_BACKEND=neo4j is not yet implemented. Use arcadedb.");
 } else {
-  throw new Error(`Unknown GRAPH_BACKEND: ${graphBackend}. Supported: arcadedb, neo4j`);
+  throw new Error(`Unknown GRAPH_BACKEND: ${graphBackend}. Supported: arcadedb`);
 }
 
 let db: DbAdapter;
@@ -107,7 +110,7 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): boolean {
   return true;
 }
 
-// ── MCP session store ──────────────────────────────────────────────────────
+// ── MCP session store (StreamableHTTP) ────────────────────────────────────
 
 interface Session {
   transport: StreamableHTTPServerTransport;
@@ -139,6 +142,56 @@ function createSession(principal: Principal): { sessionId: string; transport: St
   };
 
   return { sessionId, transport };
+}
+
+// ── SSE session store ──────────────────────────────────────────────────────
+
+interface SseSession {
+  transport: SSEServerTransport;
+  principal: Principal;
+}
+
+const sseSessions = new Map<string, SseSession>();
+
+async function handleSseConnect(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const principal = await verifyRequest(req.headers.authorization);
+  if (!principal) {
+    reject(res, 401, "Unauthorized — provide a valid Bearer token");
+    return;
+  }
+
+  const transport = new SSEServerTransport("/message", res);
+  const mcpServer = new McpServer({ name: "exobrain", version: VERSION });
+  registerKgTools(mcpServer, graph, db);
+  registerSpaceTools(mcpServer, db);
+  registerDbTools(mcpServer, db);
+  registerKeyTools(mcpServer, db);
+
+  sseSessions.set(transport.sessionId, { transport, principal });
+
+  transport.onclose = () => {
+    sseSessions.delete(transport.sessionId);
+  };
+
+  await mcpServer.connect(transport);
+  await transport.start();
+}
+
+async function handleSseMessage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? "/", "http://x");
+  const sessionId = url.searchParams.get("sessionId");
+  if (!sessionId) {
+    reject(res, 400, "sessionId query parameter required");
+    return;
+  }
+  const session = sseSessions.get(sessionId);
+  if (!session) {
+    reject(res, 404, "SSE session not found or expired");
+    return;
+  }
+  requestContext.run({ principal: session.principal }, async () => {
+    await session.transport.handlePostMessage(req, res);
+  });
 }
 
 // ── Request discriminator ──────────────────────────────────────────────────
@@ -224,12 +277,22 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
       return;
     }
 
+    // SSE transport (Claude Desktop and other SSE-only clients)
+    if (pathname === "/sse" && req.method === "GET") {
+      await handleSseConnect(req, res);
+      return;
+    }
+    if (pathname === "/message" && req.method === "POST") {
+      await handleSseMessage(req, res);
+      return;
+    }
+
     // Static files (GET only)
     if (req.method === "GET") {
       if (serveStatic(req, res)) return;
     }
 
-    // MCP protocol
+    // MCP protocol (StreamableHTTP — Claude Code and MCP-compliant clients)
     if (isMcpRequest(req)) {
       await handleMcp(req, res);
       return;

@@ -234,7 +234,11 @@ export class PostgresAdapter implements DbAdapter {
 
   async revokeApiKey(keyId: string, requestorId: string): Promise<void> {
     await this.q(
-      "UPDATE api_keys SET revoked_at = NOW() WHERE key_id = $1 AND issued_by = $2",
+      `UPDATE api_keys SET revoked_at = NOW()
+       WHERE key_id = $1
+         AND (issued_by = $2 OR EXISTS (
+           SELECT 1 FROM principals WHERE principal_id = $2 AND principal_type = 'owner'
+         ))`,
       [keyId, requestorId]
     );
   }

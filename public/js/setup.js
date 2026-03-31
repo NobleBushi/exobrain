@@ -58,8 +58,7 @@ form.addEventListener('submit', async (e) => {
     const snippet = JSON.stringify({
       mcpServers: {
         exobrain: {
-          type: 'http',
-          url: baseUrl,
+          url: `${baseUrl}/sse`,
           headers: { Authorization: `Bearer ${data.apiKey}` },
         }
       }

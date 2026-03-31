@@ -33,15 +33,17 @@ export function registerSetupRoutes(
       return;
     }
 
+    // Validate credentials before any writes (atomicity)
+    if (body.password && body.password.length < 8) {
+      jsonResponse(res, 400, { error: "Password must be at least 8 characters" });
+      return;
+    }
+
     const ownerName = (body.ownerName ?? "Owner").trim() || "Owner";
     const owner = await db.createOwnerPrincipal(ownerName);
 
     // Optional: set username/email/password at setup time
     if (body.username || body.email || body.password) {
-      if (body.password && body.password.length < 8) {
-        jsonResponse(res, 400, { error: "Password must be at least 8 characters" });
-        return;
-      }
       const credUpdates: Parameters<typeof db.updateCredentials>[1] = {};
       if (body.username) credUpdates.username    = body.username.trim();
       if (body.email)    credUpdates.email       = body.email.trim();

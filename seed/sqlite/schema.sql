@@ -159,10 +159,10 @@ CREATE INDEX IF NOT EXISTS idx_memory_pending    ON memory_entries(entry_id)
 
 -- sqlite-vec virtual table for vector search.
 -- Load the extension first: db.loadExtension('sqlite-vec');
--- Dimension must match your embedding model (1536 = nomic-embed-text).
+-- Dimension must match your embedding model (768 = nomic-embed-text).
 -- CREATE VIRTUAL TABLE IF NOT EXISTS memory_embeddings USING vec0(
 --   entry_id TEXT PRIMARY KEY,
---   embedding FLOAT[1536]
+--   embedding FLOAT[768]
 -- );
 
 -- ─── Audit Log ───────────────────────────────────────────────────────────────
