@@ -312,6 +312,23 @@ export class SqliteAdapter implements DbAdapter {
     return rows.map(r => this.parseKeyRow(r));
   }
 
+  async updateApiKey(keyId: string, requestorId: string, updates: { permissions?: string[]; spaceIds?: string[]; name?: string }): Promise<void> {
+    const fields: string[] = [];
+    const values: unknown[] = [];
+    if (updates.permissions !== undefined) { fields.push("permissions = ?"); values.push(JSON.stringify(updates.permissions)); }
+    if (updates.spaceIds !== undefined)    { fields.push("space_ids = ?");   values.push(JSON.stringify(updates.spaceIds)); }
+    if (updates.name !== undefined)        { fields.push("name = ?");        values.push(updates.name); }
+    if (fields.length === 0) return;
+    values.push(keyId, requestorId, requestorId);
+    this.get().prepare(`
+      UPDATE api_keys SET ${fields.join(", ")}
+      WHERE key_id = ? AND revoked_at IS NULL
+        AND (issued_by = ? OR EXISTS (
+          SELECT 1 FROM principals WHERE principal_id = ? AND principal_type = 'owner'
+        ))
+    `).run(...values);
+  }
+
   // ─── OAuth ────────────────────────────────────────────────────────────────
 
   async getOAuthToken(hash: string): Promise<OAuthTokenRecord | null> {

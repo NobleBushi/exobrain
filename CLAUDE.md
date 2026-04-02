@@ -1,93 +1,90 @@
 # ExoBrain — Claude Code Instructions
 
-## Session Bootstrap
-
-At the start of every session, bootstrap brain-mcp for context continuity:
-
-```
-bootstrap_session("mesh-infra")
-```
-
-Search brain-mcp for relevant prior decisions before making architectural changes:
-```
-search_memory("exobrain [topic]", space_id="mesh-infra")
-```
-
-Save significant decisions back to brain-mcp so other agents and future sessions have full context:
-```
-add_memory(content, space_id="mesh-infra", importance_score=0.9, tags=["exobrain", ...])
-```
-
 ## What This Project Is
 
-ExoBrain is an open-source MCP server providing a knowledge graph (TF3/ADFR-derived geometry) plus a scoped memory/context database layer. It is the public, generalized version of the personal `brain-mcp` project.
+ExoBrain is an open-source MCP server providing:
+- A **knowledge graph** layer (ArcadeDB, TF3/ADFR-derived geometry) accessible via Cypher
+- A **scoped memory/context database** (PostgreSQL + pgvector or SQLite + sqlite-vec)
+- **Multi-principal access control** — humans, agents, groups — with space-scoped ACL
+- **Provenance tracking** on every write (model, agent, principal, timestamp)
 
-**Key design decisions are stored in brain-mcp** (space: `mesh-infra`). Search there first before re-deriving anything significant. The Box folder (ID: 372259531135) holds the specification documents.
+It is designed to serve as a persistent identity, memory, and coordination substrate for humans and agents working together across projects, harnesses, and time.
 
 ## Project Structure
 
 ```
 exobrain/
 ├── src/
-│   ├── index.ts              # MCP server entry point
+│   ├── index.ts              # HTTP server, MCP transport, request routing
+│   ├── auth.ts               # API key + session token verification
 │   ├── adapters/
-│   │   ├── graph/            # ArcadeDB, Neo4j adapters
-│   │   └── db/               # Postgres, SQLite, libSQL adapters
-│   ├── tools/                # MCP tool implementations
-│   └── middleware/           # Auth, scope enforcement, audit logging
+│   │   ├── graph/            # ArcadeDB adapter (Neo4j interface planned)
+│   │   └── db/               # PostgreSQL and SQLite adapters + shared types
+│   ├── tools/                # MCP tool implementations (kg, db, spaces, keys)
+│   ├── api/                  # REST API route handlers
+│   └── middleware/           # Auth middleware, JSON helpers
 ├── seed/
-│   ├── arcadedb/             # TF3 Cypher seed (primary)
+│   ├── arcadedb/             # TF3 Cypher seed (primary graph backend)
 │   ├── neo4j/                # TF3 Cypher seed (alternative)
-│   ├── postgres/             # Schema SQL (principals, ACL, spaces, audit)
-│   └── sqlite/               # Lightweight schema
-├── docs/                     # Spec documents (from Box)
-├── docker-compose.yml        # ArcadeDB + Postgres (standard)
+│   ├── postgres/             # Schema SQL + seed script
+│   └── sqlite/               # Lightweight schema + seed script
+├── docs/                     # Specification and architecture documents
+├── public/                   # Admin web UI (HTML/CSS/JS, no framework)
+├── scripts/                  # Setup, backup, port-check utilities
+├── docker-compose.yml        # ArcadeDB + PostgreSQL (standard)
 └── docker-compose.lite.yml   # Embedded / Pi-friendly
 ```
 
-## Architecture Decisions (Summary)
+## Architecture Decisions
 
-Full rationale is in brain-mcp. Short version:
-
-- **Graph:** ArcadeDB (Apache 2.0, 97.8% Cypher TCK, Bolt protocol, Raspberry Pi → K8s)
-- **Database:** PostgreSQL + pgvector (primary), SQLite + sqlite-vec (embedded tier)
-- **Auth:** OAuth 2.0/PKCE (Google + GitHub) for humans; scoped API keys for agents
-- **ACL:** NTFS-inspired — space types with default permission templates, enforced at MCP layer
-- **Provenance:** Every write records `model`, `agent_name`, `principal_id`, `timestamp` — built in from init
+- **Graph:** ArcadeDB — Apache 2.0, 97.8% Cypher TCK, Bolt protocol, runs on Raspberry Pi through K8s
+- **Database:** PostgreSQL + pgvector (primary); SQLite + sqlite-vec (embedded/edge tier)
+- **Auth:** Username/password sessions + scoped API keys for agents; OAuth 2.0/PKCE placeholders in schema
+- **ACL:** NTFS-inspired — space types with default permission templates, enforced at the MCP layer
+- **Provenance:** Every write records `model`, `agent_name`, `principal_id`, `timestamp`
 
 ## Access Control Model
 
 Spaces: `public` · `shared` · `private` · `project` · `isolated`
 Permissions: `read` · `list` · `write` · `delete` · `manage` · `admin`
-Principals: `owner` · `user` · `agent` (always sub-user) · `group` · `authenticated` · `everyone`
+Principals: `owner` · `user` · `agent` (always sub-user authority) · `group`
 
-ACL is enforced at the MCP server layer. The database layer does not need RBAC.
+Token permissions are enforced before ACL: a token cannot grant more than the issuer holds.
 
-## Build Sequence
+## Build Phases
 
-- **Phase 1 (current):** Seed scripts — TF3 Cypher + Postgres schema
-- **Phase 2:** MCP server + tools
-- **Phase 3:** Docker Compose + deployment guide
-- **Phase 4:** Web interface (registration, key management, permissions browser)
-- **Phase 5:** NanoClaw + Hermes integration
-- **Phase 6:** Public release (MIT)
+- **Phase 1** ✓ Seed scripts — TF3 Cypher + schema SQL
+- **Phase 2** ✓ MCP server + tools
+- **Phase 3** ✓ Docker Compose + deployment
+- **Phase 4** ✓ Web UI — setup, admin dashboard, key management
+- **Phase 5** NanoClaw + Hermes integration
+- **Phase 6** Public release (MIT)
 
-## MCP Tools (Phase 2 target)
+## MCP Tools
 
-**Graph:** `kg_query`, `kg_add_node`, `kg_add_edge`, `kg_get_context`, `kg_promote`
-**Spaces:** `space_list`, `space_get`, `space_create`, `space_update`, `space_archive`
-**Database:** `db_read`, `db_write`, `db_scope`, `audit_read`
-**Keys:** `principal_list`, `key_issue`, `key_revoke`, `key_list`
+**Graph:** `kg_query` · `kg_add_node` · `kg_add_edge` · `kg_get_context` · `kg_promote`
+**Spaces:** `space_list` · `space_get` · `space_create` · `space_update` · `space_archive`
+**Database:** `db_read` · `db_write` · `db_scope` · `audit_read`
+**Keys:** `principal_list` · `key_issue` · `key_revoke` · `key_list`
 
-## Related Projects
+## Development Notes
 
-- `~/brain/` — personal brain-mcp instance (brain-mcp is ExoBrain's predecessor)
-- `~/nanoclaw/` — NanoClaw personal assistant (Cecil); primary agent integration target
-- `~/hermes-agent/` — Hermes-Agent (cloned for evaluation)
-- Box folder 372259531135 — spec documents (agent.md, geometry.md, REQUIREMENTS.md, TF3_KG_SPEC.md)
+- TypeScript throughout — `npm run build` compiles to `dist/`
+- No frontend framework — admin UI is vanilla HTML/CSS/JS in `public/`
+- Both DB adapters must implement the full `DbAdapter` interface in `src/adapters/db/types.ts`
+- API keys are never stored raw — only a hash is persisted; the raw value is returned once on issuance
+- Audit logging is mandatory on all key and space mutations
 
-## Session Conventions
+## Personal Context Files (`.claude/`)
 
-- Space for brain-mcp writes from this project: `mesh-infra`
-- Tag all ExoBrain-related memories: `["exobrain", ...]`
-- Document backend decisions, schema changes, and architectural pivots — not implementation details
+The `.claude/` directory is gitignored. Use it for individual context files that are specific to your setup — session bootstrap instructions, integration details for personal tooling, per-topic working notes, or environment-specific configuration guidance for AI assistants.
+
+Example layout:
+```
+.claude/
+├── CLAUDE.md          # personal session bootstrap (brain-mcp, local agent setup, etc.)
+├── integrations.md    # notes on local integrations not in the public repo
+└── hardware.md        # deployment target context
+```
+
+These files are never committed. Contributors are encouraged to maintain their own `.claude/` for context that improves AI-assisted work without leaking personal details into the shared repo.

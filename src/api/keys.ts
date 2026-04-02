@@ -91,6 +91,45 @@ export function registerKeyRoutes(
     });
   });
 
+  // Update key permissions / spaces
+  register("PATCH", "/api/keys/:id", async (req, res, params) => {
+    const principal = await requireAuth(req, res);
+    if (!principal) return;
+
+    let body: { permissions?: string[]; spaceIds?: string[]; name?: string };
+    try {
+      body = await readBody(req);
+    } catch {
+      jsonResponse(res, 400, { error: "Invalid JSON body" });
+      return;
+    }
+
+    // Non-owners cannot escalate beyond their own permissions
+    if (body.permissions && principal.principalType !== "owner") {
+      const excess = body.permissions.filter(p => !principal.permissions.includes(p));
+      if (excess.length > 0) {
+        jsonResponse(res, 403, { error: `Cannot grant permissions you don't hold: ${excess.join(", ")}` });
+        return;
+      }
+    }
+
+    await db.updateApiKey(params.id, principal.principalId, {
+      permissions: body.permissions,
+      spaceIds: body.spaceIds,
+      name: body.name,
+    });
+
+    await db.logAudit({
+      action: "key_update",
+      principalId: principal.principalId,
+      targetType: "key",
+      targetId: params.id,
+      details: { permissions: body.permissions, spaceIds: body.spaceIds },
+    });
+
+    jsonResponse(res, 200, { updated: true, keyId: params.id });
+  });
+
   // Revoke a key
   register("DELETE", "/api/keys/:id", async (req, res, params) => {
     const principal = await requireAuth(req, res);

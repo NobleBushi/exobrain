@@ -40,8 +40,9 @@ async function init() {
 
 function showShell() {
   loginOverlay.style.display = 'none';
-  shell.style.display = 'grid';
+  shell.style.display = 'flex';
   loadStatus();
+  fetchSpaces();
   loadKeys();
 }
 
@@ -141,6 +142,7 @@ document.querySelectorAll('.tab').forEach(tab => {
       if (name === 'principals') loadPrincipals();
       if (name === 'account')    loadAccount();
       if (name === 'system')     loadSystem();
+      if (name === 'help')       loadHelp();
     }
   });
 });
@@ -229,6 +231,8 @@ function row(label, value) {
 
 // ── Keys ──────────────────────────────────────────────────────────────────
 
+let currentKeys = [];
+
 async function loadKeys() {
   const r = await api('/api/keys');
   if (!r.ok) {
@@ -236,6 +240,7 @@ async function loadKeys() {
     return;
   }
   const keys = await r.json();
+  currentKeys = keys;
   const tbody = document.getElementById('keys-tbody');
   if (keys.length === 0) {
     tbody.innerHTML = emptyRow(7, 'No active keys');
@@ -251,10 +256,9 @@ async function loadKeys() {
         : '<span style="color:var(--text2)">all</span>'}</td>
       <td>${fmtDate(k.issuedAt)}</td>
       <td>${fmtDate(k.lastUsedAt)}</td>
-      <td>
-        <button class="btn btn-danger btn-sm" onclick="revokeKey('${esc(k.keyId)}', this)">
-          Revoke
-        </button>
+      <td style="white-space:nowrap">
+        <button class="btn btn-ghost btn-sm" style="margin-right:0.3rem" onclick="openEditModal('${esc(k.keyId)}')">Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="revokeKey('${esc(k.keyId)}', this)">Revoke</button>
       </td>
     </tr>
   `).join('');
@@ -281,8 +285,116 @@ window.revokeKey = async (keyId, btn) => {
   }
 };
 
-// Build permission checkboxes
+// ── Spaces (shared cache for issue form + edit modal) ──────────────────────
+
+let allSpaces = [];
+
+async function fetchSpaces() {
+  const r = await api('/api/spaces');
+  if (!r.ok) return;
+  allSpaces = await r.json();
+  renderSpaceCheckboxes();
+}
+
+function renderSpaceCheckboxes() {
+  const issueContainer = document.getElementById('ik-spaces-container');
+  const issueField     = document.getElementById('ik-spaces-field');
+  const editContainer  = document.getElementById('edit-modal-spaces');
+  const editSection    = document.getElementById('edit-spaces-section');
+
+  if (!allSpaces.length) {
+    issueField.style.display  = 'none';
+    editSection.style.display = 'none';
+    return;
+  }
+
+  issueField.style.display  = '';
+  editSection.style.display = '';
+
+  const makeHtml = (prefix) => allSpaces.map(s => `
+    <div class="checkbox-row">
+      <input type="checkbox" id="${prefix}${esc(s.spaceId)}" value="${esc(s.spaceId)}">
+      <label for="${prefix}${esc(s.spaceId)}">${esc(s.name)} <span style="color:var(--text2);font-size:11px">(${esc(s.spaceType)})</span></label>
+    </div>
+  `).join('');
+
+  issueContainer.innerHTML = makeHtml('ik-space-');
+  editContainer.innerHTML  = makeHtml('edit-space-');
+}
+
+// ── Edit key modal ─────────────────────────────────────────────────────────
+
+let editModalKeyId = null;
+
+window.openEditModal = function(keyId) {
+  const k = currentKeys.find(k => k.keyId === keyId);
+  if (!k) return;
+  editModalKeyId = keyId;
+  document.getElementById('edit-modal-title').textContent = `Edit Key: ${k.name}`;
+
+  // Permissions
+  PERMS.forEach(p => {
+    const cb = document.getElementById(`edit-perm-${p}`);
+    if (cb) cb.checked = (k.permissions || []).includes(p);
+  });
+
+  // Spaces
+  allSpaces.forEach(s => {
+    const cb = document.getElementById(`edit-space-${s.spaceId}`);
+    if (cb) cb.checked = (k.spaceIds || []).includes(s.spaceId);
+  });
+
+  document.getElementById('edit-modal').style.display = 'flex';
+};
+
+window.closeEditModal = function() {
+  document.getElementById('edit-modal').style.display = 'none';
+  editModalKeyId = null;
+};
+
+document.getElementById('edit-modal-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!editModalKeyId) return;
+
+  const permissions = PERMS.filter(p => {
+    const cb = document.getElementById(`edit-perm-${p}`);
+    return cb && cb.checked;
+  });
+  const spaceIds = allSpaces
+    .filter(s => { const cb = document.getElementById(`edit-space-${s.spaceId}`); return cb && cb.checked; })
+    .map(s => s.spaceId);
+
+  const btn = document.getElementById('edit-save-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  const r = await api(`/api/keys/${editModalKeyId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ permissions, spaceIds }),
+  });
+
+  btn.disabled = false;
+  btn.textContent = 'Save';
+
+  const ok  = document.getElementById('keys-ok');
+  const err = document.getElementById('keys-err');
+
+  if (r.ok) {
+    closeEditModal();
+    ok.textContent = 'Key updated.';
+    ok.style.display = 'block';
+    setTimeout(() => { ok.style.display = 'none'; }, 3000);
+    loadKeys();
+  } else {
+    const d = await r.json().catch(() => ({}));
+    err.textContent = d.error || 'Failed to update key.';
+    err.style.display = 'block';
+  }
+});
+
+// ── Build permission checkboxes (issue form + edit modal)
 const PERMS = ['read', 'list', 'write', 'delete', 'manage', 'admin'];
+
 const permBox = document.getElementById('perm-checkboxes');
 PERMS.forEach(p => {
   const id = `perm-${p}`;
@@ -291,6 +403,16 @@ PERMS.forEach(p => {
   div.innerHTML = `<input type="checkbox" id="${id}" value="${p}" ${p === 'read' || p === 'list' ? 'checked' : ''}>
     <label for="${id}">${p}</label>`;
   permBox.appendChild(div);
+});
+
+const editPermBox = document.getElementById('edit-perm-checkboxes');
+PERMS.forEach(p => {
+  const id = `edit-perm-${p}`;
+  const div = document.createElement('div');
+  div.className = 'checkbox-row';
+  div.innerHTML = `<input type="checkbox" id="${id}" value="${p}">
+    <label for="${id}">${p}</label>`;
+  editPermBox.appendChild(div);
 });
 
 document.getElementById('issue-form').addEventListener('submit', async (e) => {
@@ -302,10 +424,13 @@ document.getElementById('issue-form').addEventListener('submit', async (e) => {
   const agentName = document.getElementById('ik-name').value.trim();
   const expiresAt = document.getElementById('ik-expires').value.trim() || undefined;
   const permissions = PERMS.filter(p => document.getElementById(`perm-${p}`).checked);
+  const spaceIds = allSpaces
+    .filter(s => { const cb = document.getElementById(`ik-space-${s.spaceId}`); return cb && cb.checked; })
+    .map(s => s.spaceId);
 
   const r = await api('/api/keys', {
     method: 'POST',
-    body: JSON.stringify({ agentName, permissions, expiresAt }),
+    body: JSON.stringify({ agentName, permissions, expiresAt, spaceIds }),
   });
 
   const data = await r.json();
@@ -324,6 +449,7 @@ document.getElementById('issue-form').addEventListener('submit', async (e) => {
   document.getElementById('new-key-value').textContent = data.apiKey;
   document.getElementById('ik-name').value = '';
   document.getElementById('ik-expires').value = '';
+  document.querySelectorAll('#ik-spaces-container input[type=checkbox]').forEach(cb => { cb.checked = false; });
   loadKeys();
 });
 
@@ -489,6 +615,42 @@ function esc(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+// ── Help ──────────────────────────────────────────────────────────────────
+
+async function loadHelp() {
+  const listEl = document.getElementById('help-docs-list');
+  const r = await fetch('/api/docs').catch(() => null);
+  if (!r || !r.ok) {
+    listEl.textContent = 'Could not load documentation list.';
+    return;
+  }
+  const docs = await r.json();
+  if (!docs.length) {
+    listEl.textContent = 'No documentation files found.';
+    return;
+  }
+  listEl.innerHTML = docs.map(d => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:.4rem 0;border-bottom:1px solid var(--border);">
+      <span style="font-family:var(--mono);font-size:12px;color:var(--text)">${esc(d.path)}</span>
+      <button class="btn btn-ghost btn-sm" onclick="viewDoc('${esc(d.path)}')">View</button>
+    </div>
+  `).join('');
+}
+
+window.viewDoc = async function(path) {
+  const viewer   = document.getElementById('help-doc-viewer');
+  const titleEl  = document.getElementById('help-doc-title');
+  const contentEl = document.getElementById('help-doc-content');
+
+  titleEl.textContent   = path;
+  contentEl.textContent = 'Loading…';
+  viewer.style.display  = 'block';
+  viewer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const r = await fetch(`/api/docs/${encodeURIComponent(path)}`).catch(() => null);
+  contentEl.textContent = (r && r.ok) ? await r.text() : 'Failed to load file.';
+};
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 

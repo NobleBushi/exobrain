@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createReadStream, statSync } from "node:fs";
+import { createReadStream, statSync, readdirSync, readFileSync as readFile } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -76,6 +76,7 @@ registerAuthRoutes(apiRouter.register.bind(apiRouter), db);
 // ── Static file serving ────────────────────────────────────────────────────
 
 const PUBLIC_DIR = resolve(fileURLToPath(new URL(".", import.meta.url)), "../public");
+const DOCS_DIR   = resolve(fileURLToPath(new URL(".", import.meta.url)), "../docs");
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".css":  "text/css; charset=utf-8",
@@ -108,6 +109,45 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): boolean {
   res.writeHead(200, { "Content-Type": mime });
   createReadStream(fullPath).pipe(res);
   return true;
+}
+
+// ── Docs serving ─────────────────────────────────────────────────────────
+
+function listDocFiles(dir: string, prefix: string): Array<{ path: string; name: string }> {
+  const out: Array<{ path: string; name: string }> = [];
+  try {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) out.push(...listDocFiles(join(dir, entry.name), rel));
+      else if (entry.name.endsWith(".md")) out.push({ path: rel, name: entry.name.replace(/\.md$/, "") });
+    }
+  } catch { /* ignore */ }
+  return out;
+}
+
+function serveDocs(req: IncomingMessage, res: ServerResponse, pathname: string): boolean {
+  if (req.method !== "GET") return false;
+  if (pathname === "/api/docs") {
+    const files = listDocFiles(DOCS_DIR, "");
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(files));
+    return true;
+  }
+  if (pathname.startsWith("/api/docs/")) {
+    const sub = decodeURIComponent(pathname.slice("/api/docs/".length));
+    const full = resolve(join(DOCS_DIR, sub));
+    if (!full.startsWith(DOCS_DIR)) { res.writeHead(403); res.end(); return true; }
+    try {
+      const content = readFile(full, "utf-8");
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end(content);
+    } catch {
+      res.writeHead(404);
+      res.end();
+    }
+    return true;
+  }
+  return false;
 }
 
 // ── MCP session store (StreamableHTTP) ────────────────────────────────────
@@ -269,6 +309,12 @@ const httpServer = createServer(async (req: IncomingMessage, res: ServerResponse
   try {
     const url = new URL(req.url ?? "/", "http://x");
     const pathname = url.pathname;
+
+    // Docs (public, no auth required)
+    if (pathname === "/api/docs" || pathname.startsWith("/api/docs/")) {
+      serveDocs(req, res, pathname);
+      return;
+    }
 
     // REST API routes (handle their own auth)
     if (pathname.startsWith("/api/")) {

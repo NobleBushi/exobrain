@@ -251,6 +251,24 @@ export class PostgresAdapter implements DbAdapter {
     return res.rows.map(r => this.parseKeyRow(r));
   }
 
+  async updateApiKey(keyId: string, requestorId: string, updates: { permissions?: string[]; spaceIds?: string[]; name?: string }): Promise<void> {
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+    let idx = 1;
+    if (updates.permissions !== undefined) { setClauses.push(`permissions = $${idx++}::permission[]`); values.push(updates.permissions); }
+    if (updates.spaceIds !== undefined)    { setClauses.push(`space_ids = $${idx++}`);                 values.push(updates.spaceIds); }
+    if (updates.name !== undefined)        { setClauses.push(`name = $${idx++}`);                      values.push(updates.name); }
+    if (setClauses.length === 0) return;
+    values.push(keyId, requestorId);
+    await this.q(`
+      UPDATE api_keys SET ${setClauses.join(", ")}
+      WHERE key_id = $${idx} AND revoked_at IS NULL
+        AND (issued_by = $${idx + 1} OR EXISTS (
+          SELECT 1 FROM principals WHERE principal_id = $${idx + 1} AND principal_type = 'owner'
+        ))
+    `, values);
+  }
+
   async createAgentPrincipal(name: string): Promise<PrincipalRecord> {
     const res = await this.q<PrincipalRecord>(`
       INSERT INTO principals (principal_type, name) VALUES ('agent', $1) RETURNING *

@@ -119,6 +119,7 @@ export interface DbAdapter {
   issueApiKey(key: Omit<ApiKeyRecord, "issuedAt" | "lastUsedAt">): Promise<ApiKeyRecord>;
   revokeApiKey(keyId: string, requestorId: string): Promise<void>;
   listApiKeys(issuerId: string): Promise<ApiKeyRecord[]>;
+  updateApiKey(keyId: string, requestorId: string, updates: { permissions?: string[]; spaceIds?: string[]; name?: string }): Promise<void>;
 
   // OAuth
   getOAuthToken(hash: string): Promise<OAuthTokenRecord | null>;
