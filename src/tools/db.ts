@@ -15,10 +15,10 @@ export function registerDbTools(server: McpServer, db: DbAdapter) {
   // ── db_write ──────────────────────────────────────────────────────────────
   server.tool(
     "db_write",
-    "Write a memory entry to a space. Requires 'write' permission. Provenance (model, agent_name) is encouraged for all writes.",
+    "Write a memory entry to a space. Requires 'write' permission. Entries should capture distilled knowledge — insights, decisions, references — not raw document content. Provenance (model, agent_name) is encouraged for all writes.",
     {
       space_id:        z.string().optional().describe("Target space ID (defaults to active scope set by db_scope)"),
-      content:         z.string().describe("The knowledge content to store"),
+      content:         z.string().describe("The knowledge content to store. Should be distilled insight, not raw source text."),
       summary:         z.string().optional().describe("Short summary (used in bootstrap context)"),
       entry_type:      z.enum(["semantic", "procedural", "episodic", "correction"]).optional().default("semantic"),
       importance_score: z.number().min(0).max(1).optional().default(0.5)
@@ -28,8 +28,13 @@ export function registerDbTools(server: McpServer, db: DbAdapter) {
                          .describe("TF3 node IDs this entry relates to (e.g. ['N0020','N0030'])"),
       model:           z.string().optional().describe("LLM that generated this content (e.g. claude-sonnet-4-6)"),
       agent_name:      z.string().optional().describe("Agent identity (e.g. Cecil, coordinator)"),
+      source_filename: z.string().optional().describe("Original filename this knowledge was derived from"),
+      source_url:      z.string().optional().describe("URL of the source (web page, cloud storage link, etc.)"),
+      source_file_id:  z.string().optional().describe("External system file ID (e.g. Box, Drive, Notion)"),
+      source_type:     z.string().optional().describe("Brief source descriptor, e.g. 'pdf', 'webpage', 'slack-thread', 'email', 'meeting-notes'"),
     },
-    async ({ space_id: rawSpaceId, content, summary, entry_type, importance_score, tags, kg_nodes, model, agent_name }) => {
+    async ({ space_id: rawSpaceId, content, summary, entry_type, importance_score, tags, kg_nodes, model, agent_name,
+             source_filename, source_url, source_file_id, source_type }) => {
       const principal = getPrincipal();
       const ctx = getContext();
       const space_id = rawSpaceId ?? ctx.scopedSpaceId;
@@ -52,15 +57,26 @@ export function registerDbTools(server: McpServer, db: DbAdapter) {
         return { content: [{ type: "text" as const, text: `Write permission required on '${space_id}'.` }], isError: true };
       }
 
+      const source = (source_filename || source_url || source_file_id || source_type)
+        ? {
+            ...(source_filename && { filename: source_filename }),
+            ...(source_url      && { url:      source_url }),
+            ...(source_file_id  && { file_id:  source_file_id }),
+            ...(source_type     && { type:     source_type }),
+          }
+        : undefined;
+
       const entryId = await db.write(space_id, {
         principalId: principal.principalId,
         content, summary, entryType: entry_type,
         importanceScore: importance_score,
         tags: tags ?? [], kgNodes: kg_nodes ?? [],
         model, agentName: agent_name,
+        ...(source && { metadata: { source } }),
       });
 
-      return { content: [{ type: "text" as const, text: `✓ Written to '${space_id}'. Entry ID: ${entryId}` }] };
+      const sourceNote = source ? ` (source: ${source.filename ?? source.url ?? source.file_id ?? source.type})` : "";
+      return { content: [{ type: "text" as const, text: `✓ Written to '${space_id}'. Entry ID: ${entryId}${sourceNote}` }] };
     }
   );
 
