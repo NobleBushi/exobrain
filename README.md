@@ -6,6 +6,25 @@ ExoBrain gives AI agents and their human collaborators a shared substrate for me
 
 ---
 
+## What ExoBrain Is For
+
+ExoBrain is an **intelligence layer**, not a document store or RAG pipeline.
+
+It is designed to remember:
+- What was learned and from what source
+- What was decided and why
+- What went wrong and how that changed the approach
+- What an agent or human needs to carry forward across sessions and projects
+
+It is **not** designed to:
+- Store raw documents (use cloud storage — Box, Drive, S3)
+- Bulk-index text for retrieval (use a dedicated RAG system)
+- Replace a wiki or knowledge base
+
+ExoBrain *can* do semantic retrieval, and is capable of full-fidelity recall when that matters. But its default posture is lean — distilled insight over verbose ingestion. A well-used ExoBrain stays sharp as it grows; a misused one becomes a dump.
+
+---
+
 ## What It Provides
 
 - **Knowledge graph** — ArcadeDB with TF3/ADFR geometry, queryable via Cypher
@@ -43,6 +62,83 @@ ExoBrain gives AI agents and their human collaborators a shared substrate for me
 |-------|---------|-----------------|
 | Graph | ArcadeDB | ArcadeDB (embedded mode) |
 | Database | PostgreSQL + pgvector | SQLite + sqlite-vec |
+
+**Recommended alongside ExoBrain:**
+A dedicated RAG system (LightRAG, Chroma, etc.) for document-level retrieval. The two are complementary — RAG handles the archive, ExoBrain holds the intelligence. An agent queries RAG, finds something significant, distills it, and writes the insight into ExoBrain with source provenance.
+
+---
+
+## Agent Patterns
+
+These are the core behaviors that make ExoBrain effective. Agents and their system prompts should follow this workflow.
+
+### 1. Bootstrap at session start
+
+Before doing anything else, load relevant context:
+
+```
+kg_get_context  topic: "current project or domain"
+db_read         query: "relevant topic or recent decisions"
+```
+
+Don't skip this. Cold-starting without context is the main way agents repeat mistakes or re-derive things already known.
+
+### 2. Take notes during work
+
+When something important happens — a decision, a discovery, a constraint — write it immediately, not just at session end:
+
+```
+db_write  content: "distilled insight"
+          entry_type: "semantic" | "episodic" | "procedural"
+          importance_score: 0.0–1.0
+          tags: ["project", "topic"]
+          source_url / source_filename / source_file_id  (if derived from a document)
+```
+
+Write the *learning*, not the raw content. If you read a 50-page spec, write what it means for the work — not the spec itself.
+
+### 3. Record corrections explicitly
+
+When something previously believed turns out to be wrong, write a correction — don't just overwrite silently:
+
+```
+db_write  content: "corrected understanding of X"
+          entry_type: "correction"
+          importance_score: 0.8
+          tags: ["correction", "topic"]
+```
+
+Corrections surface in future context and prevent the same mistake from recurring.
+
+### 4. Collapse learning periodically
+
+When several related entries accumulate, consolidate them into one stronger memory:
+
+```
+db_read   query: "topic to consolidate"
+          → gather related entries
+
+db_write  content: "synthesized understanding combining entry IDs [x, y, z]"
+          importance_score: 0.85
+          tags: ["consolidated", "topic"]
+          metadata: { supersedes: ["entry-id-1", "entry-id-2", "entry-id-3"] }
+```
+
+This keeps the memory store from becoming noisy. High-importance consolidated entries surface before their lower-scored predecessors.
+
+### 5. Promote durable concepts to the graph
+
+When a concept proves genuinely foundational — appearing across multiple sessions, anchoring other decisions — promote it from memory to the knowledge graph:
+
+```
+kg_promote  name: "concept name"
+            domain: "domain"
+            anchor: "nearest core node ID"
+            description: "what this concept represents and why it matters"
+            space_id: "also write a memory entry linking back"
+```
+
+Not everything deserves graph promotion. Reserve it for concepts that should anchor future reasoning, not transient observations.
 
 ---
 

@@ -15,7 +15,7 @@ export function registerDbTools(server: McpServer, db: DbAdapter) {
   // ── db_write ──────────────────────────────────────────────────────────────
   server.tool(
     "db_write",
-    "Write a memory entry to a space. Requires 'write' permission. Entries should capture distilled knowledge — insights, decisions, references — not raw document content. Provenance (model, agent_name) is encouraged for all writes.",
+    "Write a memory entry to a space. Requires 'write' permission. Write when: a decision is made, something important is learned, a mistake is corrected, a task produces durable knowledge, or a session ends with context worth preserving. Entries should be distilled — insights, decisions, corrections, references — not raw document content. Use entry_type='correction' when overriding or refining a prior belief. Use importance_score to signal how much this should shape future context. Provenance (model, agent_name) is encouraged for all writes.",
     {
       space_id:        z.string().optional().describe("Target space ID (defaults to active scope set by db_scope)"),
       content:         z.string().describe("The knowledge content to store. Should be distilled insight, not raw source text."),
@@ -83,7 +83,7 @@ export function registerDbTools(server: McpServer, db: DbAdapter) {
   // ── db_read ───────────────────────────────────────────────────────────────
   server.tool(
     "db_read",
-    "Read memory entries from a space. Supports keyword search and filtering. Results ordered by importance then recency.",
+    "Read memory entries from a space. Call at session start to bootstrap context — search for topics relevant to the current task before proceeding. Also use to gather related entries before collapsing them: read several related memories, synthesize them into one stronger entry via db_write (higher importance_score, entry_type='correction'), then note the superseded entry IDs in the new entry's tags or metadata. Results ordered by importance then recency.",
     {
       space_id:  z.string().optional().describe("Space to read from (defaults to active scope set by db_scope)"),
       query:     z.string().optional().default("").describe("Keyword search (empty = return recent entries)"),

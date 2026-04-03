@@ -12,7 +12,7 @@ export function registerKgTools(
   // ── kg_query ──────────────────────────────────────────────────────────────
   server.tool(
     "kg_query",
-    "Execute a Cypher query against the TF3 knowledge graph. Use MATCH patterns to traverse nodes and edges. Core nodes are read-only.",
+    "Execute a Cypher query against the TF3 knowledge graph. Use for precise traversal when you know node IDs or need relationship paths. For topic-based bootstrapping, prefer kg_get_context. Core nodes are read-only.",
     {
       cypher:  z.string().describe("Cypher query to execute"),
       params:  z.record(z.unknown()).optional().describe("Query parameters"),
@@ -30,7 +30,7 @@ export function registerKgTools(
   // ── kg_get_context ────────────────────────────────────────────────────────
   server.tool(
     "kg_get_context",
-    "Retrieve a subgraph relevant to a task. Provide node IDs (e.g. N0020, N0030) or a topic string. Returns nodes and their immediate neighbours with edges.",
+    "Retrieve a subgraph relevant to a task or concept. Call at session start with topics or node IDs relevant to current work to bootstrap structural context — understand how concepts relate before acting. Also use before adding nodes or edges to avoid duplicating existing structure. Returns nodes and immediate neighbours with edges.",
     {
       node_ids: z.array(z.string()).optional().describe("TF3 node IDs to retrieve context for"),
       topic:    z.string().optional().describe("Topic string — will fuzzy-match node names and descriptions"),
@@ -165,7 +165,7 @@ export function registerKgTools(
   // ── kg_promote ────────────────────────────────────────────────────────────
   server.tool(
     "kg_promote",
-    "Elevate a piece of conversation knowledge to a persistent graph node. Validates geometry before committing.",
+    "Elevate a concept to a persistent graph node when it has proven durable — appearing repeatedly across sessions, confirmed as foundational, or important enough to anchor future reasoning. Not for transient observations; use db_write for those. Promotion means this concept becomes part of the permanent knowledge structure, not just a memory.",
     {
       name:        z.string().describe("Name for the new node"),
       domain:      z.string(),
